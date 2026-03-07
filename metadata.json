@@ -1,0 +1,5 @@
+{
+  "name": "PulseBoard",
+  "description": "A rich, visual web app for trending news, videos, and topics.",
+  "requestFramePermissions": []
+}

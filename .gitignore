@@ -1,0 +1,14 @@
+*~
+test-*.js
+test-*.ts
+node_modules/
+build/
+dist/
+coverage/
+.firebase/
+.DS_Store
+*.log
+*.tsbuildinfo
+.env*
+!.env.example
+*.cloudrun.yaml
