@@ -65,6 +65,55 @@ The app runs on `http://localhost:3000`. See `.env.example` for all required env
 
 ## Deployment
 
+The app deploys to **Cloud Run** (Express server) + **Firebase Hosting** (React frontend). Firebase Hosting rewrites all `/api/**` requests to the Cloud Run service.
+
+### Prerequisites
+
 ```bash
-npm run deploy   # builds and deploys to Firebase Hosting
+# Install CLIs if needed
+brew install --cask google-cloud-sdk
+npm install -g firebase-tools
+
+# Authenticate
+gcloud auth login
+firebase login
+
+# Set your project
+gcloud config set project YOUR_PROJECT_ID
+firebase use YOUR_PROJECT_ID
+
+# Enable Cloud Run API (one-time)
+gcloud services enable run.googleapis.com
 ```
+
+### Environment variables
+
+Create `.env.cloudrun.yaml` from `.env.example` with your production values. This file is gitignored and read by Cloud Run at deploy time:
+
+```yaml
+GEMINI_API_KEY: "..."
+NEWSDATA_API_KEY: "..."
+YOUTUBE_API_KEY: "..."
+VITE_FIREBASE_PROJECT_ID: "..."
+FIREBASE_CLIENT_EMAIL: "..."
+FIREBASE_PRIVATE_KEY: "..."
+```
+
+### Deploy
+
+```bash
+# Deploy Express server to Cloud Run
+npm run deploy:server
+
+# Build frontend and deploy to Firebase Hosting
+npm run deploy:hosting
+
+# Or both in sequence
+npm run deploy
+```
+
+`deploy:server` builds a Docker image from `Dockerfile`, pushes it to Cloud Run, and sets env vars from `.env.cloudrun.yaml`. `deploy:hosting` runs `vite build` and uploads `dist/` to Firebase Hosting.
+
+### First deploy note
+
+After the first `deploy:server`, Cloud Run assigns a service URL. Firebase Hosting is already configured to route `/api/**` to the `pulseboard-server` service in `us-central1` via the native Cloud Run integration in `firebase.json` — no manual URL wiring needed.

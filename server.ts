@@ -6,7 +6,7 @@ import { Firestore, FieldValue, FieldPath } from "@google-cloud/firestore";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
@@ -109,7 +109,7 @@ app.get("/api/news", async (req, res) => {
     const results = data.results || [];
     
     const processed = await processAndStoreItems(
-      results.slice(0, 5), // Limit to 5 to save API calls
+      results,
       'news',
       (item) => item.title,
       (item) => item.link
@@ -130,12 +130,19 @@ app.get("/api/youtube", async (req, res) => {
     if (!apiKey) return res.status(500).json({ error: "YOUTUBE_API_KEY is not configured" });
 
     const response = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(query as string)}&type=video&key=${apiKey}`
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=15&q=${encodeURIComponent(query as string)}&type=video&key=${apiKey}`
     );
     
-    if (!response.ok) throw new Error(`YouTube API error: ${response.statusText}`);
-    
     const data = await response.json();
+
+    if (!response.ok) {
+      const reason = data?.error?.errors?.[0]?.reason;
+      const message = reason === 'quotaExceeded'
+        ? 'YouTube API daily quota exceeded. Resets at midnight Pacific Time.'
+        : `YouTube API error: ${data?.error?.message || response.statusText}`;
+      throw new Error(message);
+    }
+
     const items = data.items || [];
     
     const processed = await processAndStoreItems(
@@ -158,6 +165,12 @@ app.get("/api/x-trends", async (req, res) => {
     { name: "Next.js 15", volume: "85K tweets", url: "https://twitter.com/search?q=Next.js" },
     { name: "#TechNews", volume: "45K tweets", url: "https://twitter.com/search?q=%23TechNews" },
     { name: "SpaceX Launch", volume: "210K tweets", url: "https://twitter.com/search?q=SpaceX" },
+    { name: "#OpenSource", volume: "67K tweets", url: "https://twitter.com/search?q=%23OpenSource" },
+    { name: "Rust Language", volume: "38K tweets", url: "https://twitter.com/search?q=Rust%20Language" },
+    { name: "#ClimateAction", volume: "92K tweets", url: "https://twitter.com/search?q=%23ClimateAction" },
+    { name: "GPT-5 Release", volume: "310K tweets", url: "https://twitter.com/search?q=GPT-5" },
+    { name: "#CyberSecurity", volume: "54K tweets", url: "https://twitter.com/search?q=%23CyberSecurity" },
+    { name: "Bitcoin ETF", volume: "178K tweets", url: "https://twitter.com/search?q=Bitcoin%20ETF" },
   ];
   
   const processed = await processAndStoreItems(

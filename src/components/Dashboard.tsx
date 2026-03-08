@@ -5,7 +5,7 @@ import { VideoCard } from './VideoCard';
 import { TrendCard } from './TrendCard';
 import { VideoModal } from './VideoModal';
 import { logClickHistory, subscribeToBookmarks, toggleBookmark } from '../lib/firebase';
-import { AlertCircle, Search, Menu } from 'lucide-react';
+import { AlertCircle, Search, Menu, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { MeshGradient } from './MeshGradient';
 import { PulseTicker } from './PulseTicker';
@@ -40,6 +40,31 @@ const SkeletonLoader = () => (
   </div>
 );
 
+function normalizeTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function getItemUrl(item: any, type: string): string {
+  if (type === 'news') return item.link || '';
+  if (type === 'video') return `https://youtube.com/watch?v=${item.id?.videoId || item.id}`;
+  return item.url || '';
+}
+
+function dedupeItems<T>(items: T[], getTitle: (item: T) => string, getUrl: (item: T) => string): T[] {
+  const seenUrls = new Set<string>();
+  const seenTitles = new Set<string>();
+  return items.filter(item => {
+    const url = getUrl(item);
+    const normalized = normalizeTitle(getTitle(item) || '');
+    if (!normalized) return true;
+    if (url && seenUrls.has(url)) return false;
+    if (seenTitles.has(normalized)) return false;
+    if (url) seenUrls.add(url);
+    seenTitles.add(normalized);
+    return true;
+  });
+}
+
 export function Dashboard({ user, userData }: DashboardProps) {
   const [activeInterest, setActiveInterest] = useState<string>('For You');
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,6 +74,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const [bookmarks, setBookmarks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
   
   // Initialize sidebar state based on window width
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -78,10 +104,19 @@ export function Dashboard({ user, userData }: DashboardProps) {
     const fetchData = async () => {
       setLoading(true);
       setError(null);
+      setSourceWarnings([]);
       try {
         let fetchedNews: any[] = [];
         let fetchedVideos: any[] = [];
         let fetchedTrends: any[] = [];
+
+        const collectWarnings = (newsData: any, ytData: any, xData: any) => {
+          const warnings: string[] = [];
+          if (!newsData.results) warnings.push(`News: ${newsData.error || 'Failed to load'}`);
+          if (!ytData.items) warnings.push(`YouTube: ${ytData.error || 'Failed to load'}`);
+          if (!xData.trends) warnings.push(`Trends: ${xData.error || 'Failed to load'}`);
+          setSourceWarnings(warnings);
+        };
 
         if (activeInterest === 'Saved') {
           fetchedNews = bookmarks.filter(b => b.type === 'news').map(b => b.item);
@@ -101,24 +136,35 @@ export function Dashboard({ user, userData }: DashboardProps) {
             fetch(`/api/x-trends`)
           ]);
 
-          const newsData = await newsRes.json();
-          const ytData = await ytRes.json();
-          const xData = await xRes.json();
+          const [newsData, ytData, xData] = await Promise.all([
+            newsRes.json().catch(() => ({})),
+            ytRes.json().catch(() => ({})),
+            xRes.json().catch(() => ({})),
+          ]);
+
+          collectWarnings(newsData, ytData, xData);
 
           // Separate personalized items by type
           const pNews = pItems.filter((i: any) => i.type === 'news').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
           const pVideos = pItems.filter((i: any) => i.type === 'video').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
           const pTrends = pItems.filter((i: any) => i.type === 'trend').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
 
-          // Merge 70/30
-          fetchedNews = [...pNews.slice(0, 4), ...(newsData.results || []).slice(0, 2)];
-          fetchedVideos = [...pVideos.slice(0, 4), ...(ytData.items || []).slice(0, 2)];
-          fetchedTrends = [...pTrends.slice(0, 4), ...(xData.trends || []).slice(0, 2)];
-          
-          // Fill gaps if personalized feed is empty
-          if (fetchedNews.length < 6) fetchedNews = [...fetchedNews, ...(newsData.results || [])].slice(0, 6);
-          if (fetchedVideos.length < 6) fetchedVideos = [...fetchedVideos, ...(ytData.items || [])].slice(0, 6);
-          if (fetchedTrends.length < 6) fetchedTrends = [...fetchedTrends, ...(xData.trends || [])].slice(0, 6);
+          // Merge personalized + fresh, then dedupe
+          fetchedNews = dedupeItems(
+            [...pNews, ...(newsData.results || [])],
+            (item: any) => item.title || '',
+            (item: any) => item.link || ''
+          );
+          fetchedVideos = dedupeItems(
+            [...pVideos, ...(ytData.items || [])],
+            (item: any) => item.snippet?.title || '',
+            (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
+          );
+          fetchedTrends = dedupeItems(
+            [...pTrends, ...(xData.trends || [])],
+            (item: any) => item.name || '',
+            (item: any) => item.url || ''
+          );
 
         } else {
           // Fetch specific interest or search query
@@ -128,17 +174,33 @@ export function Dashboard({ user, userData }: DashboardProps) {
             fetch(`/api/x-trends`)
           ]);
 
-          if (!newsRes.ok) throw new Error('Failed to fetch news');
-          if (!ytRes.ok) throw new Error('Failed to fetch videos');
-          if (!xRes.ok) throw new Error('Failed to fetch trends');
+          const [newsData, ytData, xData] = await Promise.all([
+            newsRes.json().catch(() => ({})),
+            ytRes.json().catch(() => ({})),
+            xRes.json().catch(() => ({})),
+          ]);
 
-          const newsData = await newsRes.json();
-          const ytData = await ytRes.json();
-          const xData = await xRes.json();
+          collectWarnings(newsData, ytData, xData);
 
-          fetchedNews = newsData.results || [];
-          fetchedVideos = ytData.items || [];
-          fetchedTrends = xData.trends || [];
+          fetchedNews = dedupeItems(
+            newsData.results || [],
+            (item: any) => item.title || '',
+            (item: any) => item.link || ''
+          );
+          fetchedVideos = dedupeItems(
+            ytData.items || [],
+            (item: any) => item.snippet?.title || '',
+            (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
+          );
+          fetchedTrends = dedupeItems(
+            xData.trends || [],
+            (item: any) => item.name || '',
+            (item: any) => item.url || ''
+          );
+
+          if (fetchedNews.length === 0 && fetchedVideos.length === 0 && fetchedTrends.length === 0) {
+            throw new Error(newsData.error || ytData.error || xData.error || 'No content found for this topic.');
+          }
         }
 
         setNews(fetchedNews);
@@ -289,6 +351,19 @@ export function Dashboard({ user, userData }: DashboardProps) {
               />
             </form>
           </header>
+
+          {sourceWarnings.length > 0 && (
+            <div className="mb-6 bg-amber-500/10 border border-amber-500/20 rounded-2xl px-5 py-3 flex items-start gap-3 text-amber-400 backdrop-blur-md">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="flex-1 text-sm">
+                <span className="font-semibold">Some sources failed to load: </span>
+                {sourceWarnings.join(' · ')}
+              </div>
+              <button onClick={() => setSourceWarnings([])} className="shrink-0 hover:text-amber-200 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {loading ? (
             <SkeletonLoader />
