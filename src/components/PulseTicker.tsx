@@ -19,10 +19,10 @@ export function PulseTicker({ trends, videos }: PulseTickerProps) {
   if (items.length === 0) return null;
 
   return (
-    <div className="relative w-full h-10 bg-stone-950/80 backdrop-blur-md border-b border-white/5 overflow-hidden flex items-center z-40">
+    <div className="relative w-full h-10 bg-[var(--th-ticker-bg)] backdrop-blur-md border-b border-border-secondary overflow-hidden flex items-center z-40">
       {/* Left Blur */}
-      <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-stone-950 to-transparent z-10 pointer-events-none" />
-      
+      <div className="absolute left-0 top-0 bottom-0 w-10 md:w-16 bg-gradient-to-r from-[var(--th-ticker-fade)] to-transparent z-10 pointer-events-none" />
+
       {/* Marquee Container */}
       <div className="flex whitespace-nowrap animate-marquee">
         {/* Duplicate items to create seamless loop */}
@@ -32,7 +32,7 @@ export function PulseTicker({ trends, videos }: PulseTickerProps) {
             href={item.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 px-6 text-sm font-medium text-stone-400 hover:text-indigo-400 transition-colors"
+            className="flex items-center gap-2 px-6 text-sm font-medium text-text-tertiary hover:text-indigo-400 transition-colors"
           >
             {item.type === 'trend' ? (
               <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
@@ -40,13 +40,13 @@ export function PulseTicker({ trends, videos }: PulseTickerProps) {
               <Play className="w-3.5 h-3.5 text-red-500" />
             )}
             <span className="truncate max-w-[300px]">{item.text}</span>
-            <span className="mx-4 text-stone-700">•</span>
+            <span className="mx-4 text-text-muted">&bull;</span>
           </a>
         ))}
       </div>
 
       {/* Right Blur */}
-      <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-stone-950 to-transparent z-10 pointer-events-none" />
+      <div className="absolute right-0 top-0 bottom-0 w-10 md:w-16 bg-gradient-to-l from-[var(--th-ticker-fade)] to-transparent z-10 pointer-events-none" />
     </div>
   );
 }

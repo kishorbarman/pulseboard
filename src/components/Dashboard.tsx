@@ -10,6 +10,7 @@ import { motion } from 'motion/react';
 import { MeshGradient } from './MeshGradient';
 import { PulseTicker } from './PulseTicker';
 import { AIPulse } from './AIPulse';
+import { About } from './About';
 import { cn } from '../lib/utils';
 
 interface DashboardProps {
@@ -33,9 +34,9 @@ const itemVariants = {
 };
 
 const SkeletonLoader = () => (
-  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6">
     {[...Array(6)].map((_, i) => (
-      <div key={i} className="h-[400px] rounded-3xl bg-stone-900/50 animate-pulse border border-white/5" />
+      <div key={i} className="h-[400px] rounded-2xl md:rounded-3xl bg-surface-primary/50 animate-pulse border border-border-secondary" />
     ))}
   </div>
 );
@@ -291,13 +292,13 @@ export function Dashboard({ user, userData }: DashboardProps) {
   }
 
   return (
-    <div className="flex min-h-screen bg-transparent text-stone-50 font-sans relative">
+    <div className="flex min-h-screen bg-transparent text-text-primary font-sans relative">
       <MeshGradient color1={colors.c1} color2={colors.c2} />
       
       {/* Mobile Overlay */}
       {isSidebarOpen && (
         <div 
-          className="fixed inset-0 bg-[#111110]/60 z-40 md:hidden backdrop-blur-sm"
+          className="fixed inset-0 bg-[var(--th-surface-overlay-heavy)] z-40 md:hidden backdrop-blur-sm"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
@@ -314,108 +315,114 @@ export function Dashboard({ user, userData }: DashboardProps) {
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         <PulseTicker trends={trends} videos={videos} />
         
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 max-w-[1600px] mx-auto w-full">
-          <header className="mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <button 
-                className={cn(
-                  "p-2 -ml-2 text-stone-400 hover:text-white rounded-full hover:bg-white/5 transition-colors",
-                  isSidebarOpen ? "md:hidden" : "" // Show on desktop if sidebar is closed
-                )}
-                onClick={() => setIsSidebarOpen(true)}
-              >
-                <Menu className="w-6 h-6" />
-              </button>
-              <div>
-                <h2 className="text-3xl md:text-clamp-xl font-black tracking-tight text-white mb-1 drop-shadow-lg leading-none">
-                  {activeInterest}
-                </h2>
-                <p className="text-stone-300 font-medium text-sm md:text-base">
-                  {activeInterest === 'For You' 
-                    ? 'A personalized mix based on your clicks and interests.' 
-                    : activeInterest === 'Saved'
-                    ? 'Your bookmarked articles, videos, and trends.'
-                    : 'Curated updates, videos, and trends based on your interests.'}
-                </p>
-              </div>
-            </div>
-            
-            <form onSubmit={handleSearch} className="relative w-full lg:w-96 shrink-0">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search topics..."
-                className="w-full bg-stone-900/60 backdrop-blur-md border border-white/10 rounded-full py-3 pl-12 pr-4 text-sm text-stone-100 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all shadow-lg"
-              />
-            </form>
-          </header>
-
-          {sourceWarnings.length > 0 && (
-            <div className="mb-6 bg-amber-500/10 border border-amber-500/20 rounded-2xl px-5 py-3 flex items-start gap-3 text-amber-400 backdrop-blur-md">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div className="flex-1 text-sm">
-                <span className="font-semibold">Some sources failed to load: </span>
-                {sourceWarnings.join(' · ')}
-              </div>
-              <button onClick={() => setSourceWarnings([])} className="shrink-0 hover:text-amber-200 transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-
-          {loading ? (
-            <SkeletonLoader />
-          ) : error ? (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-6 flex items-center gap-4 text-red-400 backdrop-blur-md">
-              <AlertCircle className="w-6 h-6 shrink-0" />
-              <p>{error}</p>
-            </div>
-          ) : mixedItems.length === 0 ? (
-            <div className="text-center py-20 text-stone-400 backdrop-blur-md bg-stone-900/30 rounded-3xl border border-white/5">
-              <p className="text-lg">No content found for this topic.</p>
-            </div>
+        <main className="flex-1 overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full">
+          {activeInterest === 'About' ? (
+            <About onBack={() => setActiveInterest('For You')} />
           ) : (
-            <motion.div 
-              variants={containerVariants}
-              initial="hidden"
-              animate="show"
-              className="grid grid-cols-1 lg:grid-cols-2 gap-6"
-            >
-              {mixedItems.map((item, idx) => (
-                <motion.div key={`${item.type}-${idx}`} variants={itemVariants} className="h-full">
-                  {item.type === 'news' && (
-                    <NewsCard 
-                      article={item.data} 
-                      onClick={() => handleItemClick(item.data, 'news')} 
-                      isBookmarked={isBookmarked(item.data, 'news')}
-                      onBookmark={(e) => handleBookmark(e, item.data, 'news')}
-                      className="h-full" 
-                    />
-                  )}
-                  {item.type === 'video' && (
-                    <VideoCard 
-                      video={item.data} 
-                      onClick={(e) => openVideoModal(item.data, e)} 
-                      isBookmarked={isBookmarked(item.data, 'video')}
-                      onBookmark={(e) => handleBookmark(e, item.data, 'video')}
-                      className="h-full" 
-                    />
-                  )}
-                  {item.type === 'trend' && (
-                    <TrendCard 
-                      trend={item.data} 
-                      index={item.index!} 
-                      onClick={() => handleItemClick(item.data, 'trend')} 
-                      isBookmarked={isBookmarked(item.data, 'trend')}
-                      onBookmark={(e) => handleBookmark(e, item.data, 'trend')}
-                      className="h-full" 
-                    />
-                  )}
+            <>
+              <header className="mb-4 md:mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 md:gap-6">
+                <div className="flex items-center gap-4">
+                  <button
+                    className={cn(
+                      "p-2 -ml-2 text-text-tertiary hover:text-text-heading rounded-full hover:bg-[var(--th-surface-btn-overlay)] transition-colors",
+                      isSidebarOpen ? "md:hidden" : "" // Show on desktop if sidebar is closed
+                    )}
+                    onClick={() => setIsSidebarOpen(true)}
+                  >
+                    <Menu className="w-6 h-6" />
+                  </button>
+                  <div>
+                    <h2 className="text-3xl md:text-clamp-xl font-black tracking-tight text-text-heading mb-1 drop-shadow-lg leading-none">
+                      {activeInterest}
+                    </h2>
+                    <p className="text-text-secondary font-medium text-sm md:text-base">
+                      {activeInterest === 'For You'
+                        ? 'A personalized mix based on your clicks and interests.'
+                        : activeInterest === 'Saved'
+                        ? 'Your bookmarked articles, videos, and trends.'
+                        : 'Curated updates, videos, and trends based on your interests.'}
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSearch} className="relative w-full lg:w-96 shrink-0">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search topics..."
+                    className="w-full bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 pl-12 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all shadow-lg"
+                  />
+                </form>
+              </header>
+
+              {sourceWarnings.length > 0 && (
+                <div className="mb-6 bg-amber-500/10 border border-amber-500/20 rounded-2xl px-5 py-3 flex items-start gap-3 text-amber-400 backdrop-blur-md">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div className="flex-1 text-sm">
+                    <span className="font-semibold">Some sources failed to load: </span>
+                    {sourceWarnings.join(' · ')}
+                  </div>
+                  <button onClick={() => setSourceWarnings([])} className="shrink-0 hover:text-amber-200 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {loading ? (
+                <SkeletonLoader />
+              ) : error ? (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-6 flex items-center gap-4 text-red-400 backdrop-blur-md">
+                  <AlertCircle className="w-6 h-6 shrink-0" />
+                  <p>{error}</p>
+                </div>
+              ) : mixedItems.length === 0 ? (
+                <div className="text-center py-20 text-text-tertiary backdrop-blur-md bg-surface-primary/30 rounded-2xl md:rounded-3xl border border-border-secondary">
+                  <p className="text-lg">No content found for this topic.</p>
+                </div>
+              ) : (
+                <motion.div
+                  variants={containerVariants}
+                  initial="hidden"
+                  animate="show"
+                  className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6"
+                >
+                  {mixedItems.map((item, idx) => (
+                    <motion.div key={`${item.type}-${idx}`} variants={itemVariants} className="h-full">
+                      {item.type === 'news' && (
+                        <NewsCard
+                          article={item.data}
+                          onClick={() => handleItemClick(item.data, 'news')}
+                          isBookmarked={isBookmarked(item.data, 'news')}
+                          onBookmark={(e) => handleBookmark(e, item.data, 'news')}
+                          className="h-full"
+                        />
+                      )}
+                      {item.type === 'video' && (
+                        <VideoCard
+                          video={item.data}
+                          onClick={(e) => openVideoModal(item.data, e)}
+                          isBookmarked={isBookmarked(item.data, 'video')}
+                          onBookmark={(e) => handleBookmark(e, item.data, 'video')}
+                          className="h-full"
+                        />
+                      )}
+                      {item.type === 'trend' && (
+                        <TrendCard
+                          trend={item.data}
+                          index={item.index!}
+                          onClick={() => handleItemClick(item.data, 'trend')}
+                          isBookmarked={isBookmarked(item.data, 'trend')}
+                          onBookmark={(e) => handleBookmark(e, item.data, 'trend')}
+                          className="h-full"
+                        />
+                      )}
+                    </motion.div>
+                  ))}
                 </motion.div>
-              ))}
-            </motion.div>
+              )}
+            </>
           )}
         </main>
       </div>
@@ -425,7 +432,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
         onClose={() => setIsModalOpen(false)} 
         videoId={activeVideoId} 
       />
-      <AIPulse />
+      <AIPulse news={news} videos={videos} trends={trends} activeInterest={activeInterest} />
     </div>
   );
 }

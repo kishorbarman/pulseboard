@@ -21,6 +21,13 @@
     <meta name="twitter:title" content="PulseBoard | Your Personalized Feed" />
     <meta name="twitter:description" content="Your personalized dashboard for trending news, videos, and topics across the web." />
     <meta name="twitter:image" content="https://api.dicebear.com/7.x/shapes/svg?seed=PulseBoard&backgroundColor=4f46e5" />
+    <script>
+      (function() {
+        var s = localStorage.getItem('pulseboard-theme');
+        var d = s === 'dark' || (!s && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (d) document.documentElement.classList.add('dark');
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

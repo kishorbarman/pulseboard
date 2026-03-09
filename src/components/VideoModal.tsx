@@ -18,17 +18,17 @@ export function VideoModal({ isOpen, onClose, videoId }: VideoModalProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="absolute inset-0 bg-[#111110]/80 backdrop-blur-sm"
+            className="absolute inset-0 bg-[var(--th-surface-overlay-heavy)] backdrop-blur-sm"
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative w-full max-w-5xl aspect-video bg-stone-950 rounded-2xl overflow-hidden shadow-2xl border border-white/10 z-10"
+            className="relative w-full max-w-5xl aspect-video bg-surface-base rounded-2xl overflow-hidden shadow-2xl border border-border-primary z-10"
           >
             <button
               onClick={onClose}
-              className="absolute top-4 right-4 w-10 h-10 bg-[#111110]/50 hover:bg-[#111110]/80 text-white rounded-full flex items-center justify-center backdrop-blur-md transition-colors z-20"
+              className="absolute top-4 right-4 w-10 h-10 bg-[var(--th-surface-overlay)] hover:bg-[var(--th-surface-overlay-heavy)] text-text-heading rounded-full flex items-center justify-center backdrop-blur-md transition-colors z-20"
             >
               <X className="w-5 h-5" />
             </button>
