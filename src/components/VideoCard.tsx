@@ -95,10 +95,10 @@ export function VideoCard({ video, onClick, className = '', isBookmarked, onBook
               role="button"
               onClick={(e) => { e.stopPropagation(); setShowSummary(v => !v); }}
               className={cn(
-                "flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-all cursor-pointer",
+                "flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition-all cursor-pointer",
                 showSummary
-                  ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-300"
-                  : "border-border-primary text-text-tertiary hover:text-indigo-300 hover:border-indigo-500/30"
+                  ? "bg-indigo-500 border-indigo-500 text-white"
+                  : "bg-indigo-500/10 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/20 hover:border-indigo-500/40"
               )}
             >
               <Sparkles className="w-3 h-3" />

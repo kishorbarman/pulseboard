@@ -20,11 +20,44 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
   const [followUp, setFollowUp] = useState('');
   const [responding, setResponding] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollParentRef = useRef<Element | null>(null);
+  const savedScrollRef = useRef<number>(0);
 
-  // Auto-scroll on new messages
+  // Auto-scroll messages inside the chat area (only for follow-ups, not initial load)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messages.length > 1) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, responding]);
+
+  // Scroll the entire summary into the viewport when it first appears
+  useEffect(() => {
+    if (messages.length === 1 && messages[0].role === 'model') {
+      setTimeout(() => {
+        containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 250);
+    }
+  }, [messages]);
+
+  // Preserve scroll position during exit animation
+  useEffect(() => {
+    if (!isVisible && scrollParentRef.current) {
+      const parent = scrollParentRef.current;
+      const saved = savedScrollRef.current;
+      let frame: number;
+      const restore = () => {
+        parent.scrollTop = saved;
+        frame = requestAnimationFrame(restore);
+      };
+      frame = requestAnimationFrame(restore);
+      const timer = setTimeout(() => {
+        cancelAnimationFrame(frame);
+        scrollParentRef.current = null;
+      }, 300);
+      return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
+    }
+  }, [isVisible]);
 
   // Reset conversation when closed
   useEffect(() => {
@@ -34,6 +67,18 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
       setResponding(false);
     }
   }, [isVisible]);
+
+  const handleClose = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Save scroll position before exit animation starts
+    const scrollParent = containerRef.current?.closest('main');
+    if (scrollParent) {
+      scrollParentRef.current = scrollParent;
+      savedScrollRef.current = scrollParent.scrollTop;
+    }
+    onClose();
+  };
 
   useEffect(() => {
     if (isVisible && text && messages.length === 0 && !loading) {
@@ -111,7 +156,7 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
           className="overflow-hidden"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
         >
-          <div className="px-4 md:px-6 pb-4 pt-4 border-t border-indigo-500/20 bg-indigo-500/5">
+          <div ref={containerRef} className="px-4 md:px-6 pb-4 pt-4 border-t border-indigo-500/20 bg-indigo-500/5">
             {/* Header */}
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
@@ -119,7 +164,7 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
                 <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">AI Summary</span>
               </div>
               <button
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
+                onClick={handleClose}
                 className="p-1 text-text-muted hover:text-text-secondary transition-colors rounded-full hover:bg-[var(--th-surface-btn-overlay)]"
               >
                 <X className="w-3.5 h-3.5" />

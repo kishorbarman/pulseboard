@@ -215,26 +215,27 @@ export function AIPulse({ news, videos, trends, activeInterest }: AIPulseProps) 
       </AnimatePresence>
 
       <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.9 }}
+        whileHover={{ scale: 1.03 }}
+        whileTap={{ scale: 0.95 }}
         onClick={generateSummary}
         disabled={!hasContent}
-        className={`relative w-12 h-12 rounded-full flex items-center justify-center bg-surface-primary border transition-colors shadow-xl disabled:opacity-40 ${
-          loading ? 'border-indigo-500' : 'border-border-primary'
+        className={`relative flex items-center gap-2 px-4 py-2.5 rounded-full bg-indigo-500 text-white font-medium text-sm shadow-lg shadow-indigo-500/25 transition-colors disabled:opacity-40 ${
+          loading ? 'bg-indigo-600' : 'hover:bg-indigo-600'
         }`}
       >
         {loading && (
           <motion.div
-            className="absolute inset-0 rounded-full border-2 border-indigo-500"
-            animate={{ scale: [1, 1.5], opacity: [1, 0] }}
+            className="absolute inset-0 rounded-full border-2 border-indigo-400"
+            animate={{ scale: [1, 1.3], opacity: [1, 0] }}
             transition={{ duration: 1.5, repeat: Infinity }}
           />
         )}
         {loading ? (
-          <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+          <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
-          <Sparkles className={`w-5 h-5 ${messages.length > 0 ? 'text-indigo-400' : 'text-text-tertiary'}`} />
+          <Sparkles className="w-4 h-4" />
         )}
+        <span>{loading ? 'Summarizing...' : 'Summarize feed'}</span>
       </motion.button>
     </div>
   );
