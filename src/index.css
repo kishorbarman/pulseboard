@@ -126,3 +126,13 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--th-scrollbar-thumb-hover);
 }
+
+/* Hide main scrollbar on mobile so content stays centered */
+@media (max-width: 767px) {
+  .mobile-hide-scrollbar {
+    scrollbar-width: none;
+  }
+  .mobile-hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

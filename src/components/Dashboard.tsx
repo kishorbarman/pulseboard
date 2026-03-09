@@ -315,7 +315,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         <PulseTicker trends={trends} videos={videos} />
         
-        <main className="flex-1 overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full">
+        <main className="flex-1 overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full mobile-hide-scrollbar">
           {activeInterest === 'About' ? (
             <About onBack={() => setActiveInterest('For You')} />
           ) : (

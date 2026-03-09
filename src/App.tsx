@@ -18,28 +18,49 @@ export default function App() {
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    let unsubDoc: (() => void) | null = null;
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
 
+      // Clean up previous Firestore listener if user changed
+      if (unsubDoc) {
+        unsubDoc();
+        unsubDoc = null;
+      }
+
       if (currentUser) {
-        // Subscribe to user document changes
+        // Safety timeout: if Firestore doesn't respond within 5s, stop loading
+        const timeout = setTimeout(() => setLoading(false), 5000);
+
         const userRef = doc(db, 'users', currentUser.uid);
-        const unsubDoc = onSnapshot(userRef, (docSnap) => {
-          if (docSnap.exists()) {
-            setUserData(docSnap.data());
-          } else {
-            setUserData(null);
+        unsubDoc = onSnapshot(
+          userRef,
+          (docSnap) => {
+            clearTimeout(timeout);
+            if (docSnap.exists()) {
+              setUserData(docSnap.data());
+            } else {
+              setUserData(null);
+            }
+            setLoading(false);
+          },
+          (error) => {
+            clearTimeout(timeout);
+            console.error('Firestore snapshot error', error);
+            setLoading(false);
           }
-          setLoading(false);
-        });
-        return () => unsubDoc();
+        );
       } else {
         setUserData(null);
         setLoading(false);
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (unsubDoc) unsubDoc();
+    };
   }, []);
 
   if (loading) {
