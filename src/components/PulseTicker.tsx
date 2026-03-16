@@ -12,7 +12,7 @@ export function PulseTicker({ trends, videos }: PulseTickerProps) {
 
   // Combine and shuffle items for the ticker
   const items = [
-    ...trends.map(t => ({ type: 'trend', text: t.name, url: t.url })),
+    ...trends.map(t => ({ type: 'trend', text: t.text || t.name, url: t.url })),
     ...videos.map(v => ({ type: 'video', text: v.snippet?.title, url: `https://youtube.com/watch?v=${v.id?.videoId || v.id}` }))
   ].filter(i => i.text).sort(() => Math.random() - 0.5).slice(0, 10); // Take 10 random items
 

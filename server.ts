@@ -7,44 +7,44 @@ import { GoogleGenAI } from "@google/genai";
 dotenv.config();
 
 // Topic-to-query and category mapping for better filtering
-const TOPIC_CONFIG: Record<string, { query: string; category?: string; ytQuery?: string }> = {
+const TOPIC_CONFIG: Record<string, { query: string; category?: string; ytQuery?: string; xQuery?: string }> = {
   // Tech & Science
-  "Artificial Intelligence": { query: '"artificial intelligence" OR "AI model" OR "generative AI"', category: "technology", ytQuery: "artificial intelligence AI news" },
-  "Machine Learning": { query: '"machine learning" OR "deep learning" OR "neural network"', category: "technology", ytQuery: "machine learning tutorial news" },
-  "Web Development": { query: '"web development" OR "frontend" OR "backend" OR "JavaScript"', category: "technology", ytQuery: "web development programming" },
-  "Cybersecurity": { query: '"cybersecurity" OR "data breach" OR "hacking" OR "security vulnerability"', category: "technology", ytQuery: "cybersecurity news threats" },
-  "Space Exploration": { query: '"space exploration" OR "NASA" OR "SpaceX" OR "rocket launch"', category: "science", ytQuery: "space exploration NASA news" },
-  "Robotics": { query: '"robotics" OR "robot" OR "automation" OR "humanoid"', category: "technology", ytQuery: "robotics automation news" },
-  "Data Science": { query: '"data science" OR "big data" OR "analytics" OR "data engineering"', category: "technology", ytQuery: "data science analytics" },
-  "Gadgets": { query: '"gadgets" OR "tech review" OR "smartphone" OR "wearable"', category: "technology", ytQuery: "gadget review tech unboxing" },
+  "Artificial Intelligence": { query: '"artificial intelligence" OR "AI model" OR "generative AI"', category: "technology", ytQuery: "artificial intelligence AI news", xQuery: "(artificial intelligence OR AI OR generative AI) -is:retweet lang:en" },
+  "Machine Learning": { query: '"machine learning" OR "deep learning" OR "neural network"', category: "technology", ytQuery: "machine learning tutorial news", xQuery: "(machine learning OR deep learning OR neural network) -is:retweet lang:en" },
+  "Web Development": { query: '"web development" OR "frontend" OR "backend" OR "JavaScript"', category: "technology", ytQuery: "web development programming", xQuery: "(web development OR frontend OR JavaScript OR React) -is:retweet lang:en" },
+  "Cybersecurity": { query: '"cybersecurity" OR "data breach" OR "hacking" OR "security vulnerability"', category: "technology", ytQuery: "cybersecurity news threats", xQuery: "(cybersecurity OR data breach OR infosec) -is:retweet lang:en" },
+  "Space Exploration": { query: '"space exploration" OR "NASA" OR "SpaceX" OR "rocket launch"', category: "science", ytQuery: "space exploration NASA news", xQuery: "(space OR NASA OR SpaceX OR rocket launch) -is:retweet lang:en" },
+  "Robotics": { query: '"robotics" OR "robot" OR "automation" OR "humanoid"', category: "technology", ytQuery: "robotics automation news", xQuery: "(robotics OR robot OR automation OR humanoid) -is:retweet lang:en" },
+  "Data Science": { query: '"data science" OR "big data" OR "analytics" OR "data engineering"', category: "technology", ytQuery: "data science analytics", xQuery: "(data science OR big data OR analytics) -is:retweet lang:en" },
+  "Gadgets": { query: '"gadgets" OR "tech review" OR "smartphone" OR "wearable"', category: "technology", ytQuery: "gadget review tech unboxing", xQuery: "(gadget OR tech review OR smartphone OR wearable) -is:retweet lang:en" },
   // News & Politics
-  "World News": { query: '"world news" OR "international" OR "global affairs"', category: "world", ytQuery: "world news today international" },
-  "US Politics": { query: '"US politics" OR "congress" OR "White House" OR "senate"', category: "politics", ytQuery: "US politics news congress" },
-  "Global Politics": { query: '"global politics" OR "geopolitics" OR "diplomacy" OR "United Nations"', category: "politics", ytQuery: "global politics geopolitics" },
-  "Economics": { query: '"economics" OR "economy" OR "GDP" OR "inflation" OR "interest rates"', category: "business", ytQuery: "economics economy news" },
-  "Climate Change": { query: '"climate change" OR "global warming" OR "carbon emissions" OR "renewable energy"', category: "environment", ytQuery: "climate change environment news" },
+  "World News": { query: '"world news" OR "international" OR "global affairs"', category: "world", ytQuery: "world news today international", xQuery: "(world news OR breaking news OR international) -is:retweet lang:en" },
+  "US Politics": { query: '"US politics" OR "congress" OR "White House" OR "senate"', category: "politics", ytQuery: "US politics news congress", xQuery: "(US politics OR congress OR White House OR senate) -is:retweet lang:en" },
+  "Global Politics": { query: '"global politics" OR "geopolitics" OR "diplomacy" OR "United Nations"', category: "politics", ytQuery: "global politics geopolitics", xQuery: "(geopolitics OR diplomacy OR United Nations) -is:retweet lang:en" },
+  "Economics": { query: '"economics" OR "economy" OR "GDP" OR "inflation" OR "interest rates"', category: "business", ytQuery: "economics economy news", xQuery: "(economics OR economy OR inflation OR GDP) -is:retweet lang:en" },
+  "Climate Change": { query: '"climate change" OR "global warming" OR "carbon emissions" OR "renewable energy"', category: "environment", ytQuery: "climate change environment news", xQuery: "(climate change OR global warming OR renewable energy) -is:retweet lang:en" },
   // Business & Finance
-  "Startups": { query: '"startup" OR "venture funding" OR "tech startup" OR "founder"', category: "business", ytQuery: "startup funding founder story" },
-  "Cryptocurrency": { query: '"cryptocurrency" OR "bitcoin" OR "ethereum" OR "blockchain" OR "crypto"', category: "business", ytQuery: "cryptocurrency bitcoin crypto news" },
-  "Venture Capital": { query: '"venture capital" OR "VC funding" OR "seed round" OR "series A"', category: "business", ytQuery: "venture capital startup funding" },
-  "Fintech": { query: '"fintech" OR "financial technology" OR "digital payments" OR "neobank"', category: "business", ytQuery: "fintech financial technology" },
-  "Stock Market": { query: '"stock market" OR "S&P 500" OR "Wall Street" OR "stocks" OR "investing"', category: "business", ytQuery: "stock market investing news" },
+  "Startups": { query: '"startup" OR "venture funding" OR "tech startup" OR "founder"', category: "business", ytQuery: "startup funding founder story", xQuery: "(startup OR venture funding OR founder OR YC) -is:retweet lang:en" },
+  "Cryptocurrency": { query: '"cryptocurrency" OR "bitcoin" OR "ethereum" OR "blockchain" OR "crypto"', category: "business", ytQuery: "cryptocurrency bitcoin crypto news", xQuery: "(crypto OR bitcoin OR ethereum OR blockchain) -is:retweet lang:en" },
+  "Venture Capital": { query: '"venture capital" OR "VC funding" OR "seed round" OR "series A"', category: "business", ytQuery: "venture capital startup funding", xQuery: "(venture capital OR VC OR seed round OR series A) -is:retweet lang:en" },
+  "Fintech": { query: '"fintech" OR "financial technology" OR "digital payments" OR "neobank"', category: "business", ytQuery: "fintech financial technology", xQuery: "(fintech OR digital payments OR neobank) -is:retweet lang:en" },
+  "Stock Market": { query: '"stock market" OR "S&P 500" OR "Wall Street" OR "stocks" OR "investing"', category: "business", ytQuery: "stock market investing news", xQuery: "(stock market OR S&P 500 OR Wall Street OR investing) -is:retweet lang:en" },
   // Lifestyle
-  "Cooking": { query: '"cooking" OR "recipe" OR "culinary" OR "chef" OR "food"', category: "food", ytQuery: "cooking recipes food" },
-  "Fitness & Health": { query: '"fitness" OR "workout" OR "health" OR "nutrition" OR "exercise"', category: "health", ytQuery: "fitness workout health tips" },
-  "Travel": { query: '"travel" OR "tourism" OR "destination" OR "vacation" OR "trip"', category: "tourism", ytQuery: "travel destination guide vlog" },
-  "Fashion": { query: '"fashion" OR "style" OR "clothing" OR "designer" OR "trends"', category: "lifestyle", ytQuery: "fashion style trends" },
-  "Photography": { query: '"photography" OR "camera" OR "photo editing" OR "photographer"', category: "lifestyle", ytQuery: "photography tips camera review" },
+  "Cooking": { query: '"cooking" OR "recipe" OR "culinary" OR "chef" OR "food"', category: "food", ytQuery: "cooking recipes food", xQuery: "(cooking OR recipe OR chef OR #foodie) -is:retweet lang:en" },
+  "Fitness & Health": { query: '"fitness" OR "workout" OR "health" OR "nutrition" OR "exercise"', category: "health", ytQuery: "fitness workout health tips", xQuery: "(fitness OR workout OR health OR nutrition) -is:retweet lang:en" },
+  "Travel": { query: '"travel" OR "tourism" OR "destination" OR "vacation" OR "trip"', category: "tourism", ytQuery: "travel destination guide vlog", xQuery: "(travel OR destination OR vacation OR #travel) -is:retweet lang:en" },
+  "Fashion": { query: '"fashion" OR "style" OR "clothing" OR "designer" OR "trends"', category: "lifestyle", ytQuery: "fashion style trends", xQuery: "(fashion OR style OR designer OR #fashion) -is:retweet lang:en" },
+  "Photography": { query: '"photography" OR "camera" OR "photo editing" OR "photographer"', category: "lifestyle", ytQuery: "photography tips camera review", xQuery: "(photography OR camera OR #photography) -is:retweet lang:en" },
   // Entertainment
-  "Gaming": { query: '"gaming" OR "video game" OR "esports" OR "game release"', category: "entertainment", ytQuery: "gaming video game review" },
-  "Movies & TV": { query: '"movie" OR "film" OR "TV show" OR "streaming" OR "box office"', category: "entertainment", ytQuery: "movie review TV show trailer" },
-  "Music": { query: '"music" OR "album" OR "concert" OR "artist" OR "song release"', category: "entertainment", ytQuery: "music new album artist" },
-  "Sports": { query: '"sports" OR "football" OR "basketball" OR "soccer" OR "championship"', category: "sports", ytQuery: "sports highlights game recap" },
-  "Books & Literature": { query: '"books" OR "literature" OR "novel" OR "author" OR "book review"', category: "lifestyle", ytQuery: "book review literature recommendations" },
+  "Gaming": { query: '"gaming" OR "video game" OR "esports" OR "game release"', category: "entertainment", ytQuery: "gaming video game review", xQuery: "(gaming OR video game OR esports OR #gaming) -is:retweet lang:en" },
+  "Movies & TV": { query: '"movie" OR "film" OR "TV show" OR "streaming" OR "box office"', category: "entertainment", ytQuery: "movie review TV show trailer", xQuery: "(movie OR film OR TV show OR streaming OR box office) -is:retweet lang:en" },
+  "Music": { query: '"music" OR "album" OR "concert" OR "artist" OR "song release"', category: "entertainment", ytQuery: "music new album artist", xQuery: "(music OR album OR concert OR #NewMusic) -is:retweet lang:en" },
+  "Sports": { query: '"sports" OR "football" OR "basketball" OR "soccer" OR "championship"', category: "sports", ytQuery: "sports highlights game recap", xQuery: "(sports OR football OR basketball OR soccer) -is:retweet lang:en" },
+  "Books & Literature": { query: '"books" OR "literature" OR "novel" OR "author" OR "book review"', category: "lifestyle", ytQuery: "book review literature recommendations", xQuery: "(books OR novel OR book review OR #BookTwitter) -is:retweet lang:en" },
   // Creative
-  "Design": { query: '"design" OR "UI UX" OR "graphic design" OR "product design"', category: "technology", ytQuery: "design UI UX graphic design" },
-  "Open Source": { query: '"open source" OR "GitHub" OR "open-source project" OR "OSS"', category: "technology", ytQuery: "open source project GitHub" },
-  "Productivity": { query: '"productivity" OR "time management" OR "workflow" OR "efficiency"', category: "lifestyle", ytQuery: "productivity tips workflow" },
+  "Design": { query: '"design" OR "UI UX" OR "graphic design" OR "product design"', category: "technology", ytQuery: "design UI UX graphic design", xQuery: "(design OR UI UX OR graphic design) -is:retweet lang:en" },
+  "Open Source": { query: '"open source" OR "GitHub" OR "open-source project" OR "OSS"', category: "technology", ytQuery: "open source project GitHub", xQuery: "(open source OR GitHub OR OSS) -is:retweet lang:en" },
+  "Productivity": { query: '"productivity" OR "time management" OR "workflow" OR "efficiency"', category: "lifestyle", ytQuery: "productivity tips workflow", xQuery: "(productivity OR time management OR workflow) -is:retweet lang:en" },
 };
 
 function getTopicConfig(topic: string) {
@@ -236,7 +236,7 @@ app.get("/api/youtube", async (req, res) => {
     const searchQuery = `${ytQuery} ${year}`;
 
     const response = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=15&q=${encodeURIComponent(searchQuery)}&type=video&order=relevance&key=${apiKey}`
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=25&q=${encodeURIComponent(searchQuery)}&type=video&order=relevance&key=${apiKey}`
     );
 
     const data = await response.json();
@@ -250,6 +250,32 @@ app.get("/api/youtube", async (req, res) => {
     }
 
     let items = data.items || [];
+
+    // Fetch channel subscriber counts to filter for established creators
+    const channelIds = [...new Set(items.map((v: any) => v.snippet?.channelId).filter(Boolean))];
+    const channelSubMap = new Map<string, number>();
+
+    if (channelIds.length > 0) {
+      try {
+        const channelRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(',')}&key=${apiKey}`
+        );
+        const channelData = await channelRes.json();
+        for (const ch of channelData.items || []) {
+          channelSubMap.set(ch.id, parseInt(ch.statistics?.subscriberCount || '0', 10));
+        }
+      } catch (e) {
+        console.error("Failed to fetch channel stats:", e);
+      }
+    }
+
+    // Filter to channels with 100K+ subscribers and attach subscriber count
+    items = items
+      .map((item: any) => {
+        const subs = channelSubMap.get(item.snippet?.channelId) || 0;
+        return { ...item, _subscriberCount: subs };
+      })
+      .filter((item: any) => item._subscriberCount >= 100000);
 
     // Gemini relevance filtering
     items = await filterByRelevance(items, rawTopic, (item) => item.snippet?.title || '');
@@ -268,28 +294,106 @@ app.get("/api/youtube", async (req, res) => {
   }
 });
 
-app.get("/api/x-trends", async (req, res) => {
-  const mockTrends = [
-    { name: "#AIRevolution", volume: "125K tweets", url: "https://twitter.com/search?q=%23AIRevolution" },
-    { name: "Next.js 15", volume: "85K tweets", url: "https://twitter.com/search?q=Next.js" },
-    { name: "#TechNews", volume: "45K tweets", url: "https://twitter.com/search?q=%23TechNews" },
-    { name: "SpaceX Launch", volume: "210K tweets", url: "https://twitter.com/search?q=SpaceX" },
-    { name: "#OpenSource", volume: "67K tweets", url: "https://twitter.com/search?q=%23OpenSource" },
-    { name: "Rust Language", volume: "38K tweets", url: "https://twitter.com/search?q=Rust%20Language" },
-    { name: "#ClimateAction", volume: "92K tweets", url: "https://twitter.com/search?q=%23ClimateAction" },
-    { name: "GPT-5 Release", volume: "310K tweets", url: "https://twitter.com/search?q=GPT-5" },
-    { name: "#CyberSecurity", volume: "54K tweets", url: "https://twitter.com/search?q=%23CyberSecurity" },
-    { name: "Bitcoin ETF", volume: "178K tweets", url: "https://twitter.com/search?q=Bitcoin%20ETF" },
-  ];
-  
-  const processed = await processAndStoreItems(
-    mockTrends,
-    'trend',
-    (item) => item.name,
-    (item) => item.url
-  );
-  
-  res.json({ trends: processed });
+app.get("/api/x-posts", async (req, res) => {
+  try {
+    const rawTopic = (req.query.q as string) || "technology";
+    const bearerToken = process.env.TWITTER_BEARER_TOKEN;
+
+    if (!bearerToken) {
+      return res.json({ posts: [] });
+    }
+
+    const config = getTopicConfig(rawTopic);
+    const query = config.xQuery || `${rawTopic} -is:retweet lang:en`;
+
+    const params = new URLSearchParams({
+      query,
+      max_results: "50",
+      "tweet.fields": "created_at,public_metrics",
+      expansions: "author_id,attachments.media_keys",
+      "user.fields": "name,username,profile_image_url,public_metrics",
+      "media.fields": "url,preview_image_url,type",
+      sort_order: "relevancy",
+    });
+
+    const twitterRes = await fetch(
+      `https://api.twitter.com/2/tweets/search/recent?${params}`,
+      { headers: { Authorization: `Bearer ${bearerToken}` } }
+    );
+
+    if (!twitterRes.ok) {
+      const errorBody = await twitterRes.text();
+      console.error("Twitter API error:", twitterRes.status, errorBody);
+      return res.json({ posts: [] });
+    }
+
+    const twitterData = await twitterRes.json();
+    const tweets = twitterData.data || [];
+    const users = twitterData.includes?.users || [];
+    const media = twitterData.includes?.media || [];
+
+    const userMap = new Map(users.map((u: any) => [u.id, u]));
+    const mediaMap = new Map(media.map((m: any) => [m.media_key, m]));
+
+    let posts = tweets.map((tweet: any) => {
+      const author: any = userMap.get(tweet.author_id) || { name: "Unknown", username: "unknown", profile_image_url: "" };
+      const tweetMedia = (tweet.attachments?.media_keys || [])
+        .map((key: string) => mediaMap.get(key))
+        .filter(Boolean)
+        .map((m: any) => {
+          const obj: Record<string, string> = { type: m.type };
+          if (m.url) obj.url = m.url;
+          if (m.preview_image_url) obj.preview_image_url = m.preview_image_url;
+          return obj;
+        });
+
+      const followers = author.public_metrics?.followers_count || 0;
+      const post: Record<string, any> = {
+        id: tweet.id,
+        text: tweet.text,
+        created_at: tweet.created_at,
+        author: {
+          name: author.name,
+          username: author.username,
+          profile_image_url: author.profile_image_url || '',
+          followers: followers,
+        },
+        metrics: {
+          likes: tweet.public_metrics?.like_count || 0,
+          retweets: tweet.public_metrics?.retweet_count || 0,
+          replies: tweet.public_metrics?.reply_count || 0,
+        },
+        url: `https://x.com/${author.username}/status/${tweet.id}`,
+      };
+      if (tweetMedia.length > 0) post.media = tweetMedia;
+      return post;
+    });
+
+    // Filter out low-follower accounts and sort by total engagement
+    posts = posts
+      .filter((p: any) => p.author.followers >= 1000)
+      .sort((a: any, b: any) => {
+        const engA = a.metrics.likes + a.metrics.retweets * 2;
+        const engB = b.metrics.likes + b.metrics.retweets * 2;
+        return engB - engA;
+      })
+      .slice(0, 10);
+
+    // Apply Gemini relevance filtering
+    posts = await filterByRelevance(posts, rawTopic, (item) => item.text);
+
+    const processed = await processAndStoreItems(
+      posts,
+      'trend',
+      (item) => item.text,
+      (item) => item.url
+    );
+
+    res.json({ posts: processed });
+  } catch (error) {
+    console.error("Error fetching X posts:", error);
+    res.json({ posts: [] });
+  }
 });
 
 app.post("/api/log-interaction", async (req, res) => {

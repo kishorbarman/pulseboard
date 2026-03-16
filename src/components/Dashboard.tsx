@@ -115,7 +115,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
           const warnings: string[] = [];
           if (!newsData.results) warnings.push(`News: ${newsData.error || 'Failed to load'}`);
           if (!ytData.items) warnings.push(`YouTube: ${ytData.error || 'Failed to load'}`);
-          if (!xData.trends) warnings.push(`Trends: ${xData.error || 'Failed to load'}`);
+          if (!xData.posts) warnings.push(`X Posts: ${xData.error || 'Failed to load'}`);
           setSourceWarnings(warnings);
         };
 
@@ -134,7 +134,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
           const [newsRes, ytRes, xRes] = await Promise.all([
             fetch(`/api/news?q=${encodeURIComponent(freshInterest)}`),
             fetch(`/api/youtube?q=${encodeURIComponent(freshInterest)}`),
-            fetch(`/api/x-trends`)
+            fetch(`/api/x-posts?q=${encodeURIComponent(freshInterest)}`)
           ]);
 
           const [newsData, ytData, xData] = await Promise.all([
@@ -162,8 +162,8 @@ export function Dashboard({ user, userData }: DashboardProps) {
             (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
           );
           fetchedTrends = dedupeItems(
-            [...pTrends, ...(xData.trends || [])],
-            (item: any) => item.name || '',
+            [...pTrends, ...(xData.posts || [])],
+            (item: any) => item.id || item.text || '',
             (item: any) => item.url || ''
           );
 
@@ -172,7 +172,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
           const [newsRes, ytRes, xRes] = await Promise.all([
             fetch(`/api/news?q=${encodeURIComponent(activeInterest)}`),
             fetch(`/api/youtube?q=${encodeURIComponent(activeInterest)}`),
-            fetch(`/api/x-trends`)
+            fetch(`/api/x-posts?q=${encodeURIComponent(activeInterest)}`)
           ]);
 
           const [newsData, ytData, xData] = await Promise.all([
@@ -194,8 +194,8 @@ export function Dashboard({ user, userData }: DashboardProps) {
             (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
           );
           fetchedTrends = dedupeItems(
-            xData.trends || [],
-            (item: any) => item.name || '',
+            xData.posts || [],
+            (item: any) => item.id || item.text || '',
             (item: any) => item.url || ''
           );
 
