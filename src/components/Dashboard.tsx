@@ -126,11 +126,10 @@ export function Dashboard({ user, userData }: DashboardProps) {
           fetchedVideos = bookmarks.filter(b => b.type === 'video').map(b => b.item);
           fetchedTrends = bookmarks.filter(b => b.type === 'trend').map(b => b.item);
         } else if (activeInterest === 'For You') {
-          // Fetch personalized feed (70%) + smart fresh content (30%)
-          const freshInterest = interests[0] || 'Technology';
+          // Fetch personalized feed + smart content covering all interests
           const [personalizedRes, smartRes] = await Promise.all([
             fetch(`/api/personalized-feed?userId=${user.uid}`),
-            fetch(`/api/smart-feed?q=${encodeURIComponent(freshInterest)}`),
+            fetch(`/api/smart-feed-foryou?interests=${encodeURIComponent(interests.join(','))}`),
           ]);
 
           const personalizedData = await personalizedRes.json();
@@ -349,13 +348,12 @@ export function Dashboard({ user, userData }: DashboardProps) {
               </header>
 
               {sourceWarnings.length > 0 && (
-                <div className="mb-6 bg-amber-500/10 border border-amber-500/20 rounded-2xl px-5 py-3 flex items-start gap-3 text-amber-400 backdrop-blur-md">
+                <div className="mb-6 bg-orange-100/15 border border-orange-400/30 rounded-2xl px-5 py-3 flex items-start gap-3 text-orange-950 backdrop-blur-md">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <div className="flex-1 text-sm">
-                    <span className="font-semibold">Some sources failed to load: </span>
                     {sourceWarnings.join(' · ')}
                   </div>
-                  <button onClick={() => setSourceWarnings([])} className="shrink-0 hover:text-amber-200 transition-colors">
+                  <button onClick={() => setSourceWarnings([])} className="shrink-0 hover:text-orange-800 transition-colors">
                     <X className="w-4 h-4" />
                   </button>
                 </div>

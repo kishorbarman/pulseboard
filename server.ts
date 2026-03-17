@@ -8,7 +8,6 @@ dotenv.config();
 
 // Smart query cache — stores Gemini-generated queries per topic for 30 minutes
 interface SmartQueryCache {
-  trendContext: string;
   newsQueries: string[];
   youtubeQueries: string[];
   twitterQueries: string[];
@@ -108,22 +107,22 @@ async function generateSmartQueries(topic: string): Promise<SmartQueryCache> {
 
   const prompt = `You are a content research assistant. Today is ${currentDate}.
 
-Research the latest news, trends, and discussions about "${topic}" using web search.
+Research what is currently happening about "${topic}" using web search.
 
-Based on your research, return a JSON object with these fields:
+Return a JSON object with 3 short search queries per platform:
 {
-  "trendContext": "A 1-2 sentence summary of what is currently trending about this topic",
   "newsQueries": ["query1", "query2", "query3"],
   "youtubeQueries": ["query1", "query2", "query3"],
   "twitterQueries": ["query1", "query2", "query3"]
 }
 
-Guidelines:
-- newsQueries: Specific search terms for a news API. Include key names, events, or technologies currently in the news. Use quoted phrases for precision.
-- youtubeQueries: Natural language queries for YouTube search. Include "${year}" where relevant for recency.
-- twitterQueries: Twitter search syntax. Include "-is:retweet lang:en" at the end of each. Focus on specific people, products, or events being discussed.
-- Each array must have exactly 3 queries, ordered from most specific/trending to broader.
-- Queries should reflect what is CURRENTLY happening, not generic evergreen terms.
+Rules:
+- Keep each query 2-5 words — short and specific
+- newsQueries: specific names, events, or products currently in the news
+- youtubeQueries: natural phrases people search on YouTube, include "${year}" where relevant
+- twitterQueries: Twitter search syntax, append "-is:retweet lang:en" to each
+- Focus on what is CURRENTLY trending, not evergreen terms
+- Order from most specific/trending to broader
 
 Return ONLY the JSON object, no markdown fences or extra text.`;
 
@@ -146,7 +145,6 @@ Return ONLY the JSON object, no markdown fences or extra text.`;
     console.warn('Failed to parse Gemini smart query response, falling back to TOPIC_CONFIG:', parseError);
     const config = getTopicConfig(topic);
     return setCachedSmartQueries(topic, {
-      trendContext: `Latest updates about ${topic}`,
       newsQueries: [config.query],
       youtubeQueries: [config.ytQuery || topic],
       twitterQueries: [config.xQuery || `${topic} -is:retweet lang:en`],
@@ -154,11 +152,204 @@ Return ONLY the JSON object, no markdown fences or extra text.`;
   }
 
   return setCachedSmartQueries(topic, {
-    trendContext: parsed.trendContext || `Latest updates about ${topic}`,
     newsQueries: Array.isArray(parsed.newsQueries) ? parsed.newsQueries.slice(0, 3) : [topic],
     youtubeQueries: Array.isArray(parsed.youtubeQueries) ? parsed.youtubeQueries.slice(0, 3) : [topic],
     twitterQueries: Array.isArray(parsed.twitterQueries) ? parsed.twitterQueries.slice(0, 3) : [`${topic} -is:retweet lang:en`],
   });
+}
+
+// --- Multi-interest "For You" smart query generation ---
+
+interface ForYouQueryCache {
+  perTopic: Record<string, {
+    newsQueries: string[];
+    youtubeQueries: string[];
+    twitterQueries: string[];
+  }>;
+  cachedAt: number;
+}
+
+const forYouQueryCache = new Map<string, ForYouQueryCache>();
+
+function getForYouCacheKey(interests: string[]): string {
+  return interests.map(i => i.toLowerCase().trim()).sort().join('|');
+}
+
+function getCachedForYouQueries(interests: string[]): ForYouQueryCache | null {
+  const key = getForYouCacheKey(interests);
+  const cached = forYouQueryCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt > CACHE_TTL_MS) {
+    forYouQueryCache.delete(key);
+    return null;
+  }
+  return cached;
+}
+
+function setCachedForYouQueries(interests: string[], data: Omit<ForYouQueryCache, 'cachedAt'>): ForYouQueryCache {
+  const key = getForYouCacheKey(interests);
+  const entry = { ...data, cachedAt: Date.now() };
+  forYouQueryCache.set(key, entry);
+  if (forYouQueryCache.size > 50) {
+    const now = Date.now();
+    for (const [k, v] of forYouQueryCache) {
+      if (now - v.cachedAt > CACHE_TTL_MS) forYouQueryCache.delete(k);
+    }
+  }
+  return entry;
+}
+
+async function generateSmartQueriesForYou(interests: string[]): Promise<ForYouQueryCache> {
+  const cached = getCachedForYouQueries(interests);
+  if (cached) {
+    console.log(`For You queries cache hit for: ${interests.join(', ')}`);
+    return cached;
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+
+  const ai = new GoogleGenAI({ apiKey });
+  const currentDate = new Date().toISOString().split('T')[0];
+
+  const prompt = `You are a content research assistant. Today is ${currentDate}.
+
+Research the latest trends for EACH of these topics: ${interests.join(', ')}
+
+Return a JSON object where each key is the exact topic name, with 2 short queries per platform:
+{
+  "${interests[0]}": {
+    "newsQueries": ["short query", "short query"],
+    "youtubeQueries": ["short query", "short query"],
+    "twitterQueries": ["query -is:retweet lang:en", "query -is:retweet lang:en"]
+  }${interests.length > 1 ? `,
+  "${interests[1]}": { ... }` : ''}
+}
+
+Rules:
+- Keep each query 2-5 words (short and specific)
+- newsQueries: specific names, events, products currently in the news
+- youtubeQueries: natural phrases people search on YouTube
+- twitterQueries: use Twitter search syntax, append -is:retweet lang:en
+- Focus on what is CURRENTLY happening, not evergreen terms
+- Return ONLY the JSON object, no markdown fences`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.0-flash',
+    contents: prompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
+
+  const text = response.text || '';
+
+  let parsed: any;
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (parseError) {
+    console.warn('Failed to parse For You smart queries, falling back to TOPIC_CONFIG:', parseError);
+    return buildForYouFallback(interests);
+  }
+
+  // Validate and normalize parsed result
+  const perTopic: ForYouQueryCache['perTopic'] = {};
+  for (const interest of interests) {
+    // Try exact match first, then case-insensitive
+    const topicData = parsed[interest] || Object.entries(parsed).find(
+      ([k]) => k.toLowerCase() === interest.toLowerCase()
+    )?.[1] as any;
+
+    if (topicData && topicData.newsQueries) {
+      perTopic[interest] = {
+        newsQueries: Array.isArray(topicData.newsQueries) ? topicData.newsQueries.slice(0, 2) : [interest],
+        youtubeQueries: Array.isArray(topicData.youtubeQueries) ? topicData.youtubeQueries.slice(0, 2) : [interest],
+        twitterQueries: Array.isArray(topicData.twitterQueries) ? topicData.twitterQueries.slice(0, 2) : [`${interest} -is:retweet lang:en`],
+      };
+    } else {
+      // Fallback for this specific interest
+      const config = getTopicConfig(interest);
+      perTopic[interest] = {
+        newsQueries: [config.query],
+        youtubeQueries: [config.ytQuery || interest],
+        twitterQueries: [config.xQuery || `${interest} -is:retweet lang:en`],
+      };
+    }
+  }
+
+  return setCachedForYouQueries(interests, { perTopic });
+}
+
+function buildForYouFallback(interests: string[]): ForYouQueryCache {
+  const perTopic: ForYouQueryCache['perTopic'] = {};
+  for (const interest of interests) {
+    const config = getTopicConfig(interest);
+    perTopic[interest] = {
+      newsQueries: [config.query],
+      youtubeQueries: [config.ytQuery || interest],
+      twitterQueries: [config.xQuery || `${interest} -is:retweet lang:en`],
+    };
+  }
+  return setCachedForYouQueries(interests, { perTopic });
+}
+
+// Tag a result by its most likely interest based on keyword matching
+function tagByInterest(title: string, interests: string[]): string {
+  const lower = title.toLowerCase();
+  for (const interest of interests) {
+    const keywords = interest.toLowerCase().split(/\s+/);
+    if (keywords.some(kw => kw.length > 2 && lower.includes(kw))) {
+      return interest;
+    }
+  }
+  // Check TOPIC_CONFIG query terms as secondary signal
+  for (const interest of interests) {
+    const config = TOPIC_CONFIG[interest];
+    if (config?.query) {
+      const terms = config.query.replace(/['"]/g, '').split(/\s+OR\s+/i);
+      if (terms.some(t => t.trim().length > 2 && lower.includes(t.trim().toLowerCase()))) {
+        return interest;
+      }
+    }
+  }
+  return interests[0];
+}
+
+// Round-robin diversity enforcement across interest buckets
+function ensureDiversity<T>(
+  items: T[],
+  getTag: (item: T) => string,
+  maxPerInterest: number,
+  totalMax: number
+): T[] {
+  const buckets = new Map<string, T[]>();
+  for (const item of items) {
+    const tag = getTag(item);
+    if (!buckets.has(tag)) buckets.set(tag, []);
+    buckets.get(tag)!.push(item);
+  }
+
+  const result: T[] = [];
+  const keys = [...buckets.keys()];
+  let round = 0;
+
+  while (result.length < totalMax) {
+    let added = false;
+    for (const key of keys) {
+      const bucket = buckets.get(key)!;
+      if (round < bucket.length && round < maxPerInterest) {
+        result.push(bucket[round]);
+        added = true;
+        if (result.length >= totalMax) break;
+      }
+    }
+    if (!added) break;
+    round++;
+  }
+
+  return result;
 }
 
 // Generate a detailed summary of the actual fetched content for the AI Insights panel
@@ -348,33 +539,55 @@ async function processAndStoreItems(items: any[], type: string, getTitle: (item:
 }
 
 // Reusable fetch helpers for each platform
-async function fetchNewsForQuery(queryStr: string, category?: string): Promise<any[]> {
+interface FetchResult<T> {
+  items: T[];
+  error?: 'rate_limit' | 'quota_exceeded' | 'no_api_key' | 'network_error' | null;
+}
+
+async function fetchNewsForQuery(queryStr: string, category?: string): Promise<FetchResult<any>> {
   const apiKey = process.env.NEWSDATA_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) {
+    console.warn('[News] No NEWSDATA_API_KEY configured');
+    return { items: [], error: 'no_api_key' };
+  }
   try {
     let url = `https://newsdata.io/api/1/news?apikey=${apiKey}&q=${encodeURIComponent(queryStr)}&language=en`;
     if (category) url += `&category=${category}`;
     const response = await fetch(url);
-    if (!response.ok) return [];
+    if (!response.ok) {
+      const body = await response.text();
+      console.warn(`[News] query="${queryStr}" status=${response.status} body=${body.slice(0, 200)}`);
+      const error = response.status === 429 ? 'rate_limit' as const : 'network_error' as const;
+      return { items: [], error };
+    }
     const data = await response.json();
-    return data.results || [];
+    console.log(`[News] query="${queryStr}" → ${(data.results || []).length} results`);
+    return { items: data.results || [] };
   } catch (e) {
-    console.error('fetchNewsForQuery error:', e);
-    return [];
+    console.error('[News] fetchNewsForQuery error:', e);
+    return { items: [], error: 'network_error' };
   }
 }
 
-async function fetchYouTubeForQuery(queryStr: string): Promise<any[]> {
+async function fetchYouTubeForQuery(queryStr: string, minSubscribers = 100000): Promise<FetchResult<any>> {
   const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) {
+    console.warn('[YouTube] No YOUTUBE_API_KEY configured');
+    return { items: [], error: 'no_api_key' };
+  }
   try {
     const response = await fetch(
       `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=15&q=${encodeURIComponent(queryStr)}&type=video&order=relevance&key=${apiKey}`
     );
     const data = await response.json();
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.warn(`[YouTube] query="${queryStr}" status=${response.status} error=${JSON.stringify(data.error?.message || '').slice(0, 200)}`);
+      const error = (response.status === 403 || response.status === 429) ? 'quota_exceeded' as const : 'network_error' as const;
+      return { items: [], error };
+    }
 
     let items = data.items || [];
+    console.log(`[YouTube] query="${queryStr}" → ${items.length} raw results`);
 
     // Fetch channel subscriber counts for quality filtering
     const channelIds = [...new Set(items.map((v: any) => v.snippet?.channelId).filter(Boolean))];
@@ -389,24 +602,28 @@ async function fetchYouTubeForQuery(queryStr: string): Promise<any[]> {
           channelSubMap.set(ch.id, parseInt(ch.statistics?.subscriberCount || '0', 10));
         }
       } catch (e) {
-        console.error('Failed to fetch channel stats:', e);
+        console.error('[YouTube] Failed to fetch channel stats:', e);
       }
     }
 
     items = items
       .map((item: any) => ({ ...item, _subscriberCount: channelSubMap.get(item.snippet?.channelId) || 0 }))
-      .filter((item: any) => item._subscriberCount >= 100000);
+      .filter((item: any) => item._subscriberCount >= minSubscribers);
 
-    return items;
+    console.log(`[YouTube] query="${queryStr}" → ${items.length} after ${minSubscribers}+ sub filter`);
+    return { items };
   } catch (e) {
-    console.error('fetchYouTubeForQuery error:', e);
-    return [];
+    console.error('[YouTube] fetchYouTubeForQuery error:', e);
+    return { items: [], error: 'network_error' };
   }
 }
 
-async function fetchXPostsForQuery(queryStr: string): Promise<any[]> {
+async function fetchXPostsForQuery(queryStr: string): Promise<FetchResult<any>> {
   const bearerToken = process.env.TWITTER_BEARER_TOKEN;
-  if (!bearerToken) return [];
+  if (!bearerToken) {
+    console.warn('[Twitter] No TWITTER_BEARER_TOKEN configured');
+    return { items: [], error: 'no_api_key' };
+  }
   try {
     const params = new URLSearchParams({
       query: queryStr,
@@ -422,10 +639,16 @@ async function fetchXPostsForQuery(queryStr: string): Promise<any[]> {
       `https://api.twitter.com/2/tweets/search/recent?${params}`,
       { headers: { Authorization: `Bearer ${bearerToken}` } }
     );
-    if (!twitterRes.ok) return [];
+    if (!twitterRes.ok) {
+      const body = await twitterRes.text();
+      console.warn(`[Twitter] query="${queryStr}" status=${twitterRes.status} body=${body.slice(0, 200)}`);
+      const error = (twitterRes.status === 429) ? 'rate_limit' as const : 'network_error' as const;
+      return { items: [], error };
+    }
 
     const twitterData = await twitterRes.json();
     const tweets = twitterData.data || [];
+    console.log(`[Twitter] query="${queryStr}" → ${tweets.length} tweets`);
     const users = twitterData.includes?.users || [];
     const media = twitterData.includes?.media || [];
 
@@ -466,11 +689,21 @@ async function fetchXPostsForQuery(queryStr: string): Promise<any[]> {
       })
       .slice(0, 10);
 
-    return posts;
+    return { items: posts };
   } catch (e) {
     console.error('fetchXPostsForQuery error:', e);
-    return [];
+    return { items: [], error: 'network_error' };
   }
+}
+
+// Helper to build a descriptive warning message from fetch errors
+function buildWarning(source: string, errors: Set<string | undefined>): string {
+  const reasons = [...errors].filter(Boolean);
+  if (reasons.includes('rate_limit')) return `${source}: API rate limit reached — try again in a few minutes`;
+  if (reasons.includes('quota_exceeded')) return `${source}: Daily API quota exceeded — resets tomorrow`;
+  if (reasons.includes('no_api_key')) return `${source}: Not configured`;
+  if (reasons.includes('network_error')) return `${source}: Failed to connect`;
+  return `${source}: No results found`;
 }
 
 // API Routes
@@ -697,7 +930,6 @@ app.get("/api/smart-feed", async (req, res) => {
       console.warn('Smart query generation failed, falling back to TOPIC_CONFIG:', geminiError);
       const config = getTopicConfig(topic);
       smartQueries = {
-        trendContext: `Latest updates about ${topic}`,
         newsQueries: [config.query],
         youtubeQueries: [config.ytQuery || topic],
         twitterQueries: [config.xQuery || `${topic} -is:retweet lang:en`],
@@ -706,31 +938,48 @@ app.get("/api/smart-feed", async (req, res) => {
       warnings.push('AI query generation unavailable, using default queries');
     }
 
-    // Step 2: Fetch from all APIs in parallel using smart queries
+    // Step 2: Fetch ALL queries per platform in parallel, merge and dedupe
     const [newsResults, ytResults, xResults] = await Promise.all([
       (async () => {
-        let results = await fetchNewsForQuery(smartQueries.newsQueries[0]);
-        if (results.length === 0 && smartQueries.newsQueries[1]) {
-          results = await fetchNewsForQuery(smartQueries.newsQueries[1]);
-        }
-        if (results.length === 0) warnings.push('News: No results found');
-        return results;
+        const allResults = await Promise.all(smartQueries.newsQueries.map(q => fetchNewsForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          const key = item.link || item.title;
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        if (deduped.length === 0) warnings.push(buildWarning('News', errors));
+        return deduped;
       })(),
       (async () => {
-        let results = await fetchYouTubeForQuery(smartQueries.youtubeQueries[0]);
-        if (results.length === 0 && smartQueries.youtubeQueries[1]) {
-          results = await fetchYouTubeForQuery(smartQueries.youtubeQueries[1]);
-        }
-        if (results.length === 0) warnings.push('YouTube: No results found');
-        return results;
+        const allResults = await Promise.all(smartQueries.youtubeQueries.map(q => fetchYouTubeForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          const key = item.id?.videoId || item.id;
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        if (deduped.length === 0) warnings.push(buildWarning('YouTube', errors));
+        return deduped;
       })(),
       (async () => {
-        let results = await fetchXPostsForQuery(smartQueries.twitterQueries[0]);
-        if (results.length === 0 && smartQueries.twitterQueries[1]) {
-          results = await fetchXPostsForQuery(smartQueries.twitterQueries[1]);
-        }
-        if (results.length === 0) warnings.push('X Posts: No results found');
-        return results;
+        const allResults = await Promise.all(smartQueries.twitterQueries.map(q => fetchXPostsForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          if (!item.id || seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+        if (deduped.length === 0) warnings.push(buildWarning('X Posts', errors));
+        return deduped;
       })(),
     ]);
 
@@ -749,6 +998,151 @@ app.get("/api/smart-feed", async (req, res) => {
       generateFeedSummary(topic, filteredNews, filteredVideos, filteredPosts),
     ]);
 
+    // Tag all items with the topic interest
+    const taggedProcessedNews = processedNews.map((i: any) => ({ ...i, _interest: topic }));
+    const taggedProcessedVideos = processedVideos.map((i: any) => ({ ...i, _interest: topic }));
+    const taggedProcessedPosts = processedPosts.map((i: any) => ({ ...i, _interest: topic }));
+
+    res.json({
+      news: { results: taggedProcessedNews },
+      videos: { items: taggedProcessedVideos },
+      posts: { posts: taggedProcessedPosts },
+      trendContext: feedSummary,
+      warnings,
+    });
+  } catch (error) {
+    console.error("Error in smart-feed:", error);
+    res.status(500).json({ error: "Failed to fetch smart feed" });
+  }
+});
+
+app.get("/api/smart-feed-foryou", async (req, res) => {
+  try {
+    const interestsParam = (req.query.interests as string) || '';
+    const interests = interestsParam.split(',').map(i => i.trim()).filter(Boolean).slice(0, 10);
+    if (interests.length === 0) {
+      return res.status(400).json({ error: 'No interests provided' });
+    }
+
+    const warnings: string[] = [];
+
+    // Step 1: Generate smart queries for all interests (single Gemini call, cached)
+    let forYouQueries: ForYouQueryCache;
+    try {
+      forYouQueries = await generateSmartQueriesForYou(interests);
+    } catch (geminiError) {
+      console.warn('For You query generation failed, falling back to TOPIC_CONFIG:', geminiError);
+      forYouQueries = buildForYouFallback(interests);
+      warnings.push('AI query generation unavailable, using default queries');
+    }
+
+    // Log generated queries for debugging
+    console.log('[ForYou] Generated queries per interest:');
+    for (const interest of interests) {
+      const q = forYouQueries.perTopic[interest];
+      console.log(`  ${interest}: news=${JSON.stringify(q?.newsQueries)} yt=${JSON.stringify(q?.youtubeQueries)} tw=${JSON.stringify(q?.twitterQueries)}`);
+    }
+
+    // Step 2: Fetch ALL queries per interest individually, merge and dedupe
+    const [newsResults, ytResults, xResults] = await Promise.all([
+      // News: fetch all queries per interest, merge
+      (async () => {
+        const queries = interests.flatMap(i => {
+          const topicQueries = forYouQueries.perTopic[i]?.newsQueries || [i];
+          return topicQueries;
+        });
+        console.log(`[ForYou:News] Fetching ${queries.length} queries: ${JSON.stringify(queries)}`);
+        const allResults = await Promise.all(queries.map(q => fetchNewsForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          const key = item.link || item.title;
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        console.log(`[ForYou:News] Total: ${merged.length} raw → ${deduped.length} deduped`);
+        if (deduped.length === 0) warnings.push(buildWarning('News', errors));
+        return deduped;
+      })(),
+      // YouTube: fetch per-interest individually with lower sub threshold for diversity
+      (async () => {
+        const queries = interests.flatMap(i => {
+          const topicQueries = forYouQueries.perTopic[i]?.youtubeQueries || [i];
+          return topicQueries;
+        });
+        console.log(`[ForYou:YouTube] Fetching ${queries.length} queries: ${JSON.stringify(queries)}`);
+        const allResults = await Promise.all(queries.map(q => fetchYouTubeForQuery(q, 10000)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          const key = item.id?.videoId || item.id;
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        console.log(`[ForYou:YouTube] Total: ${merged.length} raw → ${deduped.length} deduped`);
+        if (deduped.length === 0) warnings.push(buildWarning('YouTube', errors));
+        return deduped;
+      })(),
+      // Twitter: fetch all queries per interest, merge
+      (async () => {
+        const queries = interests.flatMap(i => {
+          const topicQueries = forYouQueries.perTopic[i]?.twitterQueries || [`${i} -is:retweet lang:en`];
+          return topicQueries;
+        });
+        console.log(`[ForYou:Twitter] Fetching ${queries.length} queries: ${JSON.stringify(queries)}`);
+        const allResults = await Promise.all(queries.map(q => fetchXPostsForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          if (!item.id || seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+        console.log(`[ForYou:Twitter] Total: ${merged.length} raw → ${deduped.length} deduped`);
+        if (deduped.length === 0) warnings.push(buildWarning('X Posts', errors));
+        return deduped;
+      })(),
+    ]);
+
+    // Step 3: Tag results by interest and enforce diversity
+    const taggedNews = newsResults.map(item => ({
+      ...item,
+      _interest: tagByInterest(item.title || '', interests),
+    }));
+    const taggedVideos = ytResults.map(item => ({
+      ...item,
+      _interest: tagByInterest(item.snippet?.title || '', interests),
+    }));
+    const taggedPosts = xResults.map(item => ({
+      ...item,
+      _interest: tagByInterest(item.text || '', interests),
+    }));
+
+    const diverseNews = ensureDiversity(taggedNews, i => i._interest, 4, 15);
+    const diverseVideos = ensureDiversity(taggedVideos, i => i._interest, 3, 10);
+    const diversePosts = ensureDiversity(taggedPosts, i => i._interest, 3, 8);
+
+    // Step 4: Apply Gemini relevance filtering
+    const topicString = interests.join(', ');
+    const [filteredNews, filteredVideos, filteredPosts] = await Promise.all([
+      filterByRelevance(diverseNews, topicString, (item) => item.title),
+      filterByRelevance(diverseVideos, topicString, (item) => item.snippet?.title || ''),
+      filterByRelevance(diversePosts, topicString, (item) => item.text),
+    ]);
+
+    // Step 5: Store in Firestore + generate summary (in parallel)
+    const [processedNews, processedVideos, processedPosts, feedSummary] = await Promise.all([
+      processAndStoreItems(filteredNews, 'news', (item) => item.title, (item) => item.link),
+      processAndStoreItems(filteredVideos, 'video', (item) => item.snippet?.title, (item) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`),
+      processAndStoreItems(filteredPosts, 'trend', (item) => item.text, (item) => item.url),
+      generateFeedSummary(topicString, filteredNews, filteredVideos, filteredPosts),
+    ]);
+
     res.json({
       news: { results: processedNews },
       videos: { items: processedVideos },
@@ -757,8 +1151,8 @@ app.get("/api/smart-feed", async (req, res) => {
       warnings,
     });
   } catch (error) {
-    console.error("Error in smart-feed:", error);
-    res.status(500).json({ error: "Failed to fetch smart feed" });
+    console.error("Error in smart-feed-foryou:", error);
+    res.status(500).json({ error: "Failed to fetch For You feed" });
   }
 });
 

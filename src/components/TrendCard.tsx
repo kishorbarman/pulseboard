@@ -125,6 +125,11 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {trend._interest && (
+              <span className="text-[11px] font-medium text-indigo-400/70 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+                #{trend._interest}
+              </span>
+            )}
             <button
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowSummary(v => !v); }}
               className={cn(

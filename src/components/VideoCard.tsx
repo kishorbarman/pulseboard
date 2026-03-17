@@ -91,6 +91,11 @@ export function VideoCard({ video, onClick, className = '', isBookmarked, onBook
             Watch Video <Play className="w-3 h-3" />
           </span>
           <div className="flex items-center gap-2">
+            {video._interest && (
+              <span className="text-[11px] font-medium text-indigo-400/70 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+                #{video._interest}
+              </span>
+            )}
             <div
               role="button"
               onClick={(e) => { e.stopPropagation(); setShowSummary(v => !v); }}
