@@ -6,6 +6,67 @@ import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
+// Feed cache — stores fully-processed feed results per interest in Firestore
+interface FeedCacheDocument {
+  news: any[];
+  videos: any[];
+  posts: any[];
+  summary: string;
+  warnings: string[];
+  queries: { newsQueries: string[]; youtubeQueries: string[]; twitterQueries: string[] };
+  updatedAt: FirebaseFirestore.Timestamp;
+}
+
+const FEED_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const currentlyRefreshing = new Set<string>();
+
+function getFeedCacheKey(interest: string): string {
+  return interest.toLowerCase().trim();
+}
+
+async function readFeedCache(interest: string): Promise<FeedCacheDocument | null> {
+  if (!firestore) return null;
+  const key = getFeedCacheKey(interest);
+  try {
+    const doc = await firestore.collection('feedCache').doc(key).get();
+    if (!doc.exists) return null;
+    const data = doc.data() as FeedCacheDocument;
+    const updatedAt = data.updatedAt?.toMillis?.() || 0;
+    if (Date.now() - updatedAt > FEED_CACHE_TTL_MS) return null;
+    return data;
+  } catch (e) {
+    console.error(`[FeedCache] Error reading cache for "${interest}":`, e);
+    return null;
+  }
+}
+
+async function readFeedCacheEvenIfStale(interest: string): Promise<FeedCacheDocument | null> {
+  if (!firestore) return null;
+  const key = getFeedCacheKey(interest);
+  try {
+    const doc = await firestore.collection('feedCache').doc(key).get();
+    if (!doc.exists) return null;
+    return doc.data() as FeedCacheDocument;
+  } catch (e) {
+    console.error(`[FeedCache] Error reading stale cache for "${interest}":`, e);
+    return null;
+  }
+}
+
+async function writeFeedCache(interest: string, data: Omit<FeedCacheDocument, 'updatedAt'>): Promise<void> {
+  if (!firestore) return;
+  const key = getFeedCacheKey(interest);
+  try {
+    await firestore.collection('feedCache').doc(key).set({
+      ...data,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    console.log(`[FeedCache] Wrote cache for "${interest}" (${data.news.length} news, ${data.videos.length} videos, ${data.posts.length} posts)`);
+  } catch (e) {
+    console.error(`[FeedCache] Error writing cache for "${interest}":`, e);
+  }
+}
+
 // Smart query cache — stores Gemini-generated queries per topic for 30 minutes
 interface SmartQueryCache {
   newsQueries: string[];
@@ -706,6 +767,180 @@ function buildWarning(source: string, errors: Set<string | undefined>): string {
   return `${source}: No results found`;
 }
 
+// Extracted pipeline: fetch, filter, store, summarize, and cache a single interest
+async function fetchAndCacheSingleInterest(topic: string): Promise<{
+  news: any[]; videos: any[]; posts: any[]; summary: string; warnings: string[];
+}> {
+  const key = getFeedCacheKey(topic);
+  if (currentlyRefreshing.has(key)) {
+    console.log(`[FeedCache] Already refreshing "${topic}", returning stale`);
+    const stale = await readFeedCacheEvenIfStale(topic);
+    if (stale) return { news: stale.news, videos: stale.videos, posts: stale.posts, summary: stale.summary, warnings: stale.warnings || [] };
+    throw new Error(`Already refreshing "${topic}" and no stale cache`);
+  }
+  currentlyRefreshing.add(key);
+  try {
+    const warnings: string[] = [];
+
+    // Step 1: Generate smart queries
+    let smartQueries: SmartQueryCache;
+    try {
+      smartQueries = await generateSmartQueries(topic);
+    } catch (geminiError) {
+      console.warn('Smart query generation failed, falling back to TOPIC_CONFIG:', geminiError);
+      const config = getTopicConfig(topic);
+      smartQueries = {
+        newsQueries: [config.query],
+        youtubeQueries: [config.ytQuery || topic],
+        twitterQueries: [config.xQuery || `${topic} -is:retweet lang:en`],
+        cachedAt: Date.now(),
+      };
+      warnings.push('AI query generation unavailable, using default queries');
+    }
+
+    // Step 2: Fetch ALL queries per platform in parallel, merge and dedupe
+    const [newsResults, ytResults, xResults] = await Promise.all([
+      (async () => {
+        const allResults = await Promise.all(smartQueries.newsQueries.map(q => fetchNewsForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          const k = item.link || item.title;
+          if (!k || seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        if (deduped.length === 0) warnings.push(buildWarning('News', errors));
+        return deduped;
+      })(),
+      (async () => {
+        const allResults = await Promise.all(smartQueries.youtubeQueries.map(q => fetchYouTubeForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          const k = item.id?.videoId || item.id;
+          if (!k || seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        if (deduped.length === 0) warnings.push(buildWarning('YouTube', errors));
+        return deduped;
+      })(),
+      (async () => {
+        const allResults = await Promise.all(smartQueries.twitterQueries.map(q => fetchXPostsForQuery(q)));
+        const errors = new Set(allResults.map(r => r.error));
+        const merged = allResults.flatMap(r => r.items);
+        const seen = new Set<string>();
+        const deduped = merged.filter(item => {
+          if (!item.id || seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+        if (deduped.length === 0) warnings.push(buildWarning('X Posts', errors));
+        return deduped;
+      })(),
+    ]);
+
+    // Step 3: Apply Gemini relevance filtering
+    const [filteredNews, filteredVideos, filteredPosts] = await Promise.all([
+      filterByRelevance(newsResults, topic, (item) => item.title),
+      filterByRelevance(ytResults, topic, (item) => item.snippet?.title || ''),
+      filterByRelevance(xResults, topic, (item) => item.text),
+    ]);
+
+    // Step 4: Store in Firestore + generate summary (in parallel)
+    const [processedNews, processedVideos, processedPosts, feedSummary] = await Promise.all([
+      processAndStoreItems(filteredNews, 'news', (item) => item.title, (item) => item.link),
+      processAndStoreItems(filteredVideos, 'video', (item) => item.snippet?.title, (item) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`),
+      processAndStoreItems(filteredPosts, 'trend', (item) => item.text, (item) => item.url),
+      generateFeedSummary(topic, filteredNews, filteredVideos, filteredPosts),
+    ]);
+
+    // Step 5: Write to Firestore feed cache
+    await writeFeedCache(topic, {
+      news: processedNews,
+      videos: processedVideos,
+      posts: processedPosts,
+      summary: feedSummary,
+      warnings,
+      queries: {
+        newsQueries: smartQueries.newsQueries,
+        youtubeQueries: smartQueries.youtubeQueries,
+        twitterQueries: smartQueries.twitterQueries,
+      },
+    });
+
+    return { news: processedNews, videos: processedVideos, posts: processedPosts, summary: feedSummary, warnings };
+  } finally {
+    currentlyRefreshing.delete(key);
+  }
+}
+
+// Fire-and-forget background refresh for a list of interests
+function refreshInterestsInBackground(interests: string[]): void {
+  (async () => {
+    for (const interest of interests) {
+      try {
+        await fetchAndCacheSingleInterest(interest);
+        console.log(`[bg-refresh] Refreshed "${interest}"`);
+      } catch (e) {
+        console.error(`[bg-refresh] Failed to refresh "${interest}":`, e);
+      }
+    }
+  })();
+}
+
+// Merge per-interest feed caches into a combined "For You" response
+function mergeInterestCaches(
+  caches: { interest: string; data: FeedCacheDocument }[],
+  interests: string[]
+): any {
+  const allNews: any[] = [];
+  const allVideos: any[] = [];
+  const allPosts: any[] = [];
+  const allSummaries: string[] = [];
+  const allWarnings: string[] = [];
+
+  for (const { interest, data } of caches) {
+    allNews.push(...data.news.map((i: any) => ({ ...i, _interest: interest })));
+    allVideos.push(...data.videos.map((i: any) => ({ ...i, _interest: interest })));
+    allPosts.push(...data.posts.map((i: any) => ({ ...i, _interest: interest })));
+    if (data.summary) allSummaries.push(data.summary);
+    if (data.warnings) allWarnings.push(...data.warnings);
+  }
+
+  // Deduplicate
+  const dedupeByKey = (items: any[], keyFn: (i: any) => string) => {
+    const seen = new Set<string>();
+    return items.filter(i => {
+      const k = keyFn(i);
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
+
+  const dedupedNews = dedupeByKey(allNews, i => i.link || i.title);
+  const dedupedVideos = dedupeByKey(allVideos, i => i.id?.videoId || i.id);
+  const dedupedPosts = dedupeByKey(allPosts, i => i.id || i.text);
+
+  // Apply diversity enforcement
+  const diverseNews = ensureDiversity(dedupedNews, (i: any) => i._interest, 4, 15);
+  const diverseVideos = ensureDiversity(dedupedVideos, (i: any) => i._interest, 3, 10);
+  const diversePosts = ensureDiversity(dedupedPosts, (i: any) => i._interest, 3, 8);
+
+  return {
+    news: { results: diverseNews },
+    videos: { items: diverseVideos },
+    posts: { posts: diversePosts },
+    trendContext: allSummaries.join('\n\n'),
+    warnings: [...new Set(allWarnings)],
+    fromCache: true,
+  };
+}
+
 // API Routes
 app.get("/api/news", async (req, res) => {
   try {
@@ -920,95 +1155,53 @@ app.get("/api/x-posts", async (req, res) => {
 app.get("/api/smart-feed", async (req, res) => {
   try {
     const topic = (req.query.q as string) || "technology";
-    const warnings: string[] = [];
+    const forceRefresh = req.query.refresh === 'true';
 
-    // Step 1: Generate smart queries via Gemini with Google Search
-    let smartQueries: SmartQueryCache;
-    try {
-      smartQueries = await generateSmartQueries(topic);
-    } catch (geminiError) {
-      console.warn('Smart query generation failed, falling back to TOPIC_CONFIG:', geminiError);
-      const config = getTopicConfig(topic);
-      smartQueries = {
-        newsQueries: [config.query],
-        youtubeQueries: [config.ytQuery || topic],
-        twitterQueries: [config.xQuery || `${topic} -is:retweet lang:en`],
-        cachedAt: Date.now(),
-      };
-      warnings.push('AI query generation unavailable, using default queries');
+    // 1. If not forcing refresh, check cache first
+    if (!forceRefresh) {
+      const cached = await readFeedCache(topic);
+      if (cached) {
+        console.log(`[smart-feed] Cache hit for "${topic}"`);
+        return res.json({
+          news: { results: cached.news.map((i: any) => ({ ...i, _interest: topic })) },
+          videos: { items: cached.videos.map((i: any) => ({ ...i, _interest: topic })) },
+          posts: { posts: cached.posts.map((i: any) => ({ ...i, _interest: topic })) },
+          trendContext: cached.summary,
+          warnings: cached.warnings || [],
+          fromCache: true,
+        });
+      }
+
+      // 2. Stale-while-revalidate: return stale data, refresh in background
+      const stale = await readFeedCacheEvenIfStale(topic);
+      if (stale) {
+        console.log(`[smart-feed] Serving stale cache for "${topic}", refreshing in background`);
+        fetchAndCacheSingleInterest(topic).catch(e =>
+          console.error(`[smart-feed] Background refresh failed for "${topic}":`, e)
+        );
+        return res.json({
+          news: { results: stale.news.map((i: any) => ({ ...i, _interest: topic })) },
+          videos: { items: stale.videos.map((i: any) => ({ ...i, _interest: topic })) },
+          posts: { posts: stale.posts.map((i: any) => ({ ...i, _interest: topic })) },
+          trendContext: stale.summary,
+          warnings: [...(stale.warnings || []), 'Content may be slightly outdated, refreshing...'],
+          fromCache: true,
+          stale: true,
+        });
+      }
     }
 
-    // Step 2: Fetch ALL queries per platform in parallel, merge and dedupe
-    const [newsResults, ytResults, xResults] = await Promise.all([
-      (async () => {
-        const allResults = await Promise.all(smartQueries.newsQueries.map(q => fetchNewsForQuery(q)));
-        const errors = new Set(allResults.map(r => r.error));
-        const merged = allResults.flatMap(r => r.items);
-        const seen = new Set<string>();
-        const deduped = merged.filter(item => {
-          const key = item.link || item.title;
-          if (!key || seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        if (deduped.length === 0) warnings.push(buildWarning('News', errors));
-        return deduped;
-      })(),
-      (async () => {
-        const allResults = await Promise.all(smartQueries.youtubeQueries.map(q => fetchYouTubeForQuery(q)));
-        const errors = new Set(allResults.map(r => r.error));
-        const merged = allResults.flatMap(r => r.items);
-        const seen = new Set<string>();
-        const deduped = merged.filter(item => {
-          const key = item.id?.videoId || item.id;
-          if (!key || seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        if (deduped.length === 0) warnings.push(buildWarning('YouTube', errors));
-        return deduped;
-      })(),
-      (async () => {
-        const allResults = await Promise.all(smartQueries.twitterQueries.map(q => fetchXPostsForQuery(q)));
-        const errors = new Set(allResults.map(r => r.error));
-        const merged = allResults.flatMap(r => r.items);
-        const seen = new Set<string>();
-        const deduped = merged.filter(item => {
-          if (!item.id || seen.has(item.id)) return false;
-          seen.add(item.id);
-          return true;
-        });
-        if (deduped.length === 0) warnings.push(buildWarning('X Posts', errors));
-        return deduped;
-      })(),
-    ]);
-
-    // Step 3: Apply Gemini relevance filtering
-    const [filteredNews, filteredVideos, filteredPosts] = await Promise.all([
-      filterByRelevance(newsResults, topic, (item) => item.title),
-      filterByRelevance(ytResults, topic, (item) => item.snippet?.title || ''),
-      filterByRelevance(xResults, topic, (item) => item.text),
-    ]);
-
-    // Step 4: Generate content summary + store items in Firestore (in parallel)
-    const [processedNews, processedVideos, processedPosts, feedSummary] = await Promise.all([
-      processAndStoreItems(filteredNews, 'news', (item) => item.title, (item) => item.link),
-      processAndStoreItems(filteredVideos, 'video', (item) => item.snippet?.title, (item) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`),
-      processAndStoreItems(filteredPosts, 'trend', (item) => item.text, (item) => item.url),
-      generateFeedSummary(topic, filteredNews, filteredVideos, filteredPosts),
-    ]);
-
-    // Tag all items with the topic interest
-    const taggedProcessedNews = processedNews.map((i: any) => ({ ...i, _interest: topic }));
-    const taggedProcessedVideos = processedVideos.map((i: any) => ({ ...i, _interest: topic }));
-    const taggedProcessedPosts = processedPosts.map((i: any) => ({ ...i, _interest: topic }));
+    // 3. No cache or forced refresh: run full pipeline
+    console.log(`[smart-feed] ${forceRefresh ? 'Forced refresh' : 'Cache miss'} for "${topic}", fetching live`);
+    const result = await fetchAndCacheSingleInterest(topic);
 
     res.json({
-      news: { results: taggedProcessedNews },
-      videos: { items: taggedProcessedVideos },
-      posts: { posts: taggedProcessedPosts },
-      trendContext: feedSummary,
-      warnings,
+      news: { results: result.news.map((i: any) => ({ ...i, _interest: topic })) },
+      videos: { items: result.videos.map((i: any) => ({ ...i, _interest: topic })) },
+      posts: { posts: result.posts.map((i: any) => ({ ...i, _interest: topic })) },
+      trendContext: result.summary,
+      warnings: result.warnings,
+      fromCache: false,
     });
   } catch (error) {
     console.error("Error in smart-feed:", error);
@@ -1023,132 +1216,64 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
     if (interests.length === 0) {
       return res.status(400).json({ error: 'No interests provided' });
     }
+    const forceRefresh = req.query.refresh === 'true';
 
-    const warnings: string[] = [];
+    // 1. If not forcing refresh, try to serve from per-interest caches
+    if (!forceRefresh) {
+      const cacheResults = await Promise.all(
+        interests.map(async (interest) => ({
+          interest,
+          cache: await readFeedCache(interest),
+        }))
+      );
 
-    // Step 1: Generate smart queries for all interests (single Gemini call, cached)
-    let forYouQueries: ForYouQueryCache;
-    try {
-      forYouQueries = await generateSmartQueriesForYou(interests);
-    } catch (geminiError) {
-      console.warn('For You query generation failed, falling back to TOPIC_CONFIG:', geminiError);
-      forYouQueries = buildForYouFallback(interests);
-      warnings.push('AI query generation unavailable, using default queries');
+      const allCached = cacheResults.every(r => r.cache !== null);
+      if (allCached) {
+        console.log(`[smart-feed-foryou] Full cache hit for [${interests.join(', ')}]`);
+        return res.json(mergeInterestCaches(
+          cacheResults.map(r => ({ interest: r.interest, data: r.cache! })),
+          interests
+        ));
+      }
+
+      // Stale-while-revalidate: try stale caches for uncached interests
+      const staleResults = await Promise.all(
+        cacheResults.map(async (r) => ({
+          interest: r.interest,
+          cache: r.cache,
+          staleCache: r.cache ? null : await readFeedCacheEvenIfStale(r.interest),
+        }))
+      );
+
+      const canServeStale = staleResults.every(r => r.cache || r.staleCache);
+      if (canServeStale) {
+        console.log(`[smart-feed-foryou] Serving stale caches, refreshing in background`);
+        const staleInterests = staleResults.filter(r => !r.cache).map(r => r.interest);
+        refreshInterestsInBackground(staleInterests);
+        return res.json(mergeInterestCaches(
+          staleResults.map(r => ({ interest: r.interest, data: (r.cache || r.staleCache)! })),
+          interests
+        ));
+      }
     }
 
-    // Log generated queries for debugging
-    console.log('[ForYou] Generated queries per interest:');
-    for (const interest of interests) {
-      const q = forYouQueries.perTopic[interest];
-      console.log(`  ${interest}: news=${JSON.stringify(q?.newsQueries)} yt=${JSON.stringify(q?.youtubeQueries)} tw=${JSON.stringify(q?.twitterQueries)}`);
-    }
-
-    // Step 2: Fetch ALL queries per interest individually, merge and dedupe
-    const [newsResults, ytResults, xResults] = await Promise.all([
-      // News: fetch all queries per interest, merge
-      (async () => {
-        const queries = interests.flatMap(i => {
-          const topicQueries = forYouQueries.perTopic[i]?.newsQueries || [i];
-          return topicQueries;
-        });
-        console.log(`[ForYou:News] Fetching ${queries.length} queries: ${JSON.stringify(queries)}`);
-        const allResults = await Promise.all(queries.map(q => fetchNewsForQuery(q)));
-        const errors = new Set(allResults.map(r => r.error));
-        const merged = allResults.flatMap(r => r.items);
-        const seen = new Set<string>();
-        const deduped = merged.filter(item => {
-          const key = item.link || item.title;
-          if (!key || seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        console.log(`[ForYou:News] Total: ${merged.length} raw → ${deduped.length} deduped`);
-        if (deduped.length === 0) warnings.push(buildWarning('News', errors));
-        return deduped;
-      })(),
-      // YouTube: fetch per-interest individually with lower sub threshold for diversity
-      (async () => {
-        const queries = interests.flatMap(i => {
-          const topicQueries = forYouQueries.perTopic[i]?.youtubeQueries || [i];
-          return topicQueries;
-        });
-        console.log(`[ForYou:YouTube] Fetching ${queries.length} queries: ${JSON.stringify(queries)}`);
-        const allResults = await Promise.all(queries.map(q => fetchYouTubeForQuery(q, 10000)));
-        const errors = new Set(allResults.map(r => r.error));
-        const merged = allResults.flatMap(r => r.items);
-        const seen = new Set<string>();
-        const deduped = merged.filter(item => {
-          const key = item.id?.videoId || item.id;
-          if (!key || seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        console.log(`[ForYou:YouTube] Total: ${merged.length} raw → ${deduped.length} deduped`);
-        if (deduped.length === 0) warnings.push(buildWarning('YouTube', errors));
-        return deduped;
-      })(),
-      // Twitter: fetch all queries per interest, merge
-      (async () => {
-        const queries = interests.flatMap(i => {
-          const topicQueries = forYouQueries.perTopic[i]?.twitterQueries || [`${i} -is:retweet lang:en`];
-          return topicQueries;
-        });
-        console.log(`[ForYou:Twitter] Fetching ${queries.length} queries: ${JSON.stringify(queries)}`);
-        const allResults = await Promise.all(queries.map(q => fetchXPostsForQuery(q)));
-        const errors = new Set(allResults.map(r => r.error));
-        const merged = allResults.flatMap(r => r.items);
-        const seen = new Set<string>();
-        const deduped = merged.filter(item => {
-          if (!item.id || seen.has(item.id)) return false;
-          seen.add(item.id);
-          return true;
-        });
-        console.log(`[ForYou:Twitter] Total: ${merged.length} raw → ${deduped.length} deduped`);
-        if (deduped.length === 0) warnings.push(buildWarning('X Posts', errors));
-        return deduped;
-      })(),
-    ]);
-
-    // Step 3: Tag results by interest and enforce diversity
-    const taggedNews = newsResults.map(item => ({
-      ...item,
-      _interest: tagByInterest(item.title || '', interests),
-    }));
-    const taggedVideos = ytResults.map(item => ({
-      ...item,
-      _interest: tagByInterest(item.snippet?.title || '', interests),
-    }));
-    const taggedPosts = xResults.map(item => ({
-      ...item,
-      _interest: tagByInterest(item.text || '', interests),
-    }));
-
-    const diverseNews = ensureDiversity(taggedNews, i => i._interest, 4, 15);
-    const diverseVideos = ensureDiversity(taggedVideos, i => i._interest, 3, 10);
-    const diversePosts = ensureDiversity(taggedPosts, i => i._interest, 3, 8);
-
-    // Step 4: Apply Gemini relevance filtering
-    const topicString = interests.join(', ');
-    const [filteredNews, filteredVideos, filteredPosts] = await Promise.all([
-      filterByRelevance(diverseNews, topicString, (item) => item.title),
-      filterByRelevance(diverseVideos, topicString, (item) => item.snippet?.title || ''),
-      filterByRelevance(diversePosts, topicString, (item) => item.text),
-    ]);
-
-    // Step 5: Store in Firestore + generate summary (in parallel)
-    const [processedNews, processedVideos, processedPosts, feedSummary] = await Promise.all([
-      processAndStoreItems(filteredNews, 'news', (item) => item.title, (item) => item.link),
-      processAndStoreItems(filteredVideos, 'video', (item) => item.snippet?.title, (item) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`),
-      processAndStoreItems(filteredPosts, 'trend', (item) => item.text, (item) => item.url),
-      generateFeedSummary(topicString, filteredNews, filteredVideos, filteredPosts),
-    ]);
+    // 2. Fall back to live fetch: refresh each interest individually and merge
+    console.log(`[smart-feed-foryou] ${forceRefresh ? 'Forced refresh' : 'Cache miss'} for [${interests.join(', ')}], fetching live`);
+    const liveResults = await Promise.all(
+      interests.map(async (interest) => {
+        try {
+          const result = await fetchAndCacheSingleInterest(interest);
+          return { interest, data: { ...result, queries: { newsQueries: [], youtubeQueries: [], twitterQueries: [] } } as FeedCacheDocument };
+        } catch (e) {
+          console.error(`[smart-feed-foryou] Failed to fetch "${interest}":`, e);
+          return { interest, data: { news: [], videos: [], posts: [], summary: '', warnings: [`Failed to fetch ${interest}`], queries: { newsQueries: [], youtubeQueries: [], twitterQueries: [] } } as FeedCacheDocument };
+        }
+      })
+    );
 
     res.json({
-      news: { results: processedNews },
-      videos: { items: processedVideos },
-      posts: { posts: processedPosts },
-      trendContext: feedSummary,
-      warnings,
+      ...mergeInterestCaches(liveResults, interests),
+      fromCache: false,
     });
   } catch (error) {
     console.error("Error in smart-feed-foryou:", error);
@@ -1249,6 +1374,69 @@ app.get("/api/personalized-feed", async (req, res) => {
   }
 });
 
+// Manual + scheduled feed refresh endpoint
+app.post("/api/refresh-feeds", async (req, res) => {
+  try {
+    const { interests } = req.body;
+    if (!Array.isArray(interests) || interests.length === 0) {
+      return res.status(400).json({ error: 'interests array required' });
+    }
+    const toRefresh = interests.slice(0, 20);
+    console.log(`[refresh-feeds] Starting refresh for: ${toRefresh.join(', ')}`);
+
+    const results: { interest: string; success: boolean; error?: string }[] = [];
+    for (const interest of toRefresh) {
+      try {
+        await fetchAndCacheSingleInterest(interest);
+        results.push({ interest, success: true });
+        console.log(`[refresh-feeds] Refreshed "${interest}"`);
+      } catch (e: any) {
+        console.error(`[refresh-feeds] Failed to refresh "${interest}":`, e);
+        results.push({ interest, success: false, error: e.message });
+      }
+    }
+    res.json({ results });
+  } catch (error) {
+    console.error("Error in refresh-feeds:", error);
+    res.status(500).json({ error: "Failed to refresh feeds" });
+  }
+});
+
+// Background refresh: collect all unique interests from users and refresh caches
+async function runBackgroundRefresh() {
+  if (!firestore) {
+    console.log('[bg-refresh] Firestore not configured, skipping');
+    return;
+  }
+  try {
+    const usersSnap = await firestore.collection('users').get();
+    const allInterests = new Set<string>();
+    for (const userDoc of usersSnap.docs) {
+      const interests = userDoc.data().interests;
+      if (Array.isArray(interests)) {
+        interests.forEach((i: string) => allInterests.add(i));
+      }
+    }
+    if (allInterests.size === 0) {
+      console.log('[bg-refresh] No user interests found, skipping');
+      return;
+    }
+    console.log(`[bg-refresh] Refreshing ${allInterests.size} interests: ${[...allInterests].join(', ')}`);
+    for (const interest of allInterests) {
+      try {
+        await fetchAndCacheSingleInterest(interest);
+        console.log(`[bg-refresh] Refreshed "${interest}"`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (e) {
+        console.error(`[bg-refresh] Failed "${interest}":`, e);
+      }
+    }
+    console.log('[bg-refresh] Complete');
+  } catch (e) {
+    console.error('[bg-refresh] Error:', e);
+  }
+}
+
 // Vite middleware for development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -1264,6 +1452,10 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Run initial cache warming after 10s startup delay, then every 12 hours
+  setTimeout(() => runBackgroundRefresh(), 10_000);
+  setInterval(() => runBackgroundRefresh(), 12 * 60 * 60 * 1000);
 }
 
 startServer();

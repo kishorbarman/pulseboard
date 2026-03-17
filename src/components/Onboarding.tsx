@@ -80,6 +80,12 @@ export function Onboarding({ user }: { user: any }) {
         interests: selected,
         hasCompletedOnboarding: true
       });
+      // Pre-warm feed caches for selected interests
+      fetch('/api/refresh-feeds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interests: selected }),
+      }).catch(() => {});
     } catch (error) {
       console.error("Error saving interests:", error);
       setSaving(false);

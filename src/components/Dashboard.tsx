@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './Sidebar';
 import { NewsCard } from './NewsCard';
 import { VideoCard } from './VideoCard';
 import { TrendCard } from './TrendCard';
 import { VideoModal } from './VideoModal';
 import { logClickHistory, subscribeToBookmarks, toggleBookmark } from '../lib/firebase';
-import { AlertCircle, Search, Menu, X } from 'lucide-react';
-import { motion } from 'motion/react';
+import { AlertCircle, Search, Menu, X, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { MeshGradient } from './MeshGradient';
 import { AIPulse } from './AIPulse';
 import { About } from './About';
@@ -73,6 +73,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const [trends, setTrends] = useState<any[]>([]);
   const [bookmarks, setBookmarks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
   const [trendContext, setTrendContext] = useState<string>('');
@@ -101,114 +102,121 @@ export function Dashboard({ user, userData }: DashboardProps) {
     document.title = `${activeInterest} | PulseBoard`;
   }, [activeInterest]);
 
-  useEffect(() => {
-    const fetchData = async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
+    if (forceRefresh) {
+      setRefreshing(true);
+    } else {
       setLoading(true);
-      setError(null);
-      setSourceWarnings([]);
-      setTrendContext('');
-      try {
-        let fetchedNews: any[] = [];
-        let fetchedVideos: any[] = [];
-        let fetchedTrends: any[] = [];
+    }
+    setError(null);
+    setSourceWarnings([]);
+    setTrendContext('');
+    try {
+      let fetchedNews: any[] = [];
+      let fetchedVideos: any[] = [];
+      let fetchedTrends: any[] = [];
 
-        // Helper to parse smart-feed response into content arrays
-        const parseSmartFeed = (data: any) => ({
-          news: data.news?.results || [],
-          videos: data.videos?.items || [],
-          posts: data.posts?.posts || [],
-          trendContext: data.trendContext || '',
-          warnings: data.warnings || [],
-        });
+      // Helper to parse smart-feed response into content arrays
+      const parseSmartFeed = (data: any) => ({
+        news: data.news?.results || [],
+        videos: data.videos?.items || [],
+        posts: data.posts?.posts || [],
+        trendContext: data.trendContext || '',
+        warnings: data.warnings || [],
+      });
 
-        if (activeInterest === 'Saved') {
-          fetchedNews = bookmarks.filter(b => b.type === 'news').map(b => b.item);
-          fetchedVideos = bookmarks.filter(b => b.type === 'video').map(b => b.item);
-          fetchedTrends = bookmarks.filter(b => b.type === 'trend').map(b => b.item);
-        } else if (activeInterest === 'For You') {
-          // Fetch personalized feed + smart content covering all interests
-          const [personalizedRes, smartRes] = await Promise.all([
-            fetch(`/api/personalized-feed?userId=${user.uid}`),
-            fetch(`/api/smart-feed-foryou?interests=${encodeURIComponent(interests.join(','))}`),
-          ]);
+      const refreshParam = forceRefresh ? '&refresh=true' : '';
 
-          const personalizedData = await personalizedRes.json();
-          const pItems = personalizedData.items || [];
-          const smartData = await smartRes.json().catch(() => ({}));
-          const smart = parseSmartFeed(smartData);
+      if (activeInterest === 'Saved') {
+        fetchedNews = bookmarks.filter(b => b.type === 'news').map(b => b.item);
+        fetchedVideos = bookmarks.filter(b => b.type === 'video').map(b => b.item);
+        fetchedTrends = bookmarks.filter(b => b.type === 'trend').map(b => b.item);
+      } else if (activeInterest === 'For You') {
+        // Fetch personalized feed + smart content covering all interests
+        const [personalizedRes, smartRes] = await Promise.all([
+          fetch(`/api/personalized-feed?userId=${user.uid}`),
+          fetch(`/api/smart-feed-foryou?interests=${encodeURIComponent(interests.join(','))}${refreshParam}`),
+        ]);
 
-          if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
-          setTrendContext(smart.trendContext);
+        const personalizedData = await personalizedRes.json();
+        const pItems = personalizedData.items || [];
+        const smartData = await smartRes.json().catch(() => ({}));
+        const smart = parseSmartFeed(smartData);
 
-          // Separate personalized items by type
-          const pNews = pItems.filter((i: any) => i.type === 'news').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
-          const pVideos = pItems.filter((i: any) => i.type === 'video').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
-          const pTrends = pItems.filter((i: any) => i.type === 'trend').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
+        if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
+        setTrendContext(smart.trendContext);
 
-          // Merge personalized + smart fresh, then dedupe
-          fetchedNews = dedupeItems(
-            [...pNews, ...smart.news],
-            (item: any) => item.title || '',
-            (item: any) => item.link || ''
-          );
-          fetchedVideos = dedupeItems(
-            [...pVideos, ...smart.videos],
-            (item: any) => item.snippet?.title || '',
-            (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
-          );
-          fetchedTrends = dedupeItems(
-            [...pTrends, ...smart.posts],
-            (item: any) => item.id || item.text || '',
-            (item: any) => item.url || ''
-          );
+        // Separate personalized items by type
+        const pNews = pItems.filter((i: any) => i.type === 'news').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
+        const pVideos = pItems.filter((i: any) => i.type === 'video').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
+        const pTrends = pItems.filter((i: any) => i.type === 'trend').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
 
-        } else {
-          // Smart feed for specific interest or search query
-          const smartRes = await fetch(`/api/smart-feed?q=${encodeURIComponent(activeInterest)}`);
-          const smartData = await smartRes.json().catch(() => ({}));
+        // Merge personalized + smart fresh, then dedupe
+        fetchedNews = dedupeItems(
+          [...pNews, ...smart.news],
+          (item: any) => item.title || '',
+          (item: any) => item.link || ''
+        );
+        fetchedVideos = dedupeItems(
+          [...pVideos, ...smart.videos],
+          (item: any) => item.snippet?.title || '',
+          (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
+        );
+        fetchedTrends = dedupeItems(
+          [...pTrends, ...smart.posts],
+          (item: any) => item.id || item.text || '',
+          (item: any) => item.url || ''
+        );
 
-          if (smartData.error) {
-            throw new Error(smartData.error);
-          }
+      } else {
+        // Smart feed for specific interest or search query
+        const smartRes = await fetch(`/api/smart-feed?q=${encodeURIComponent(activeInterest)}${refreshParam}`);
+        const smartData = await smartRes.json().catch(() => ({}));
 
-          const smart = parseSmartFeed(smartData);
-          if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
-          setTrendContext(smart.trendContext);
-
-          fetchedNews = dedupeItems(
-            smart.news,
-            (item: any) => item.title || '',
-            (item: any) => item.link || ''
-          );
-          fetchedVideos = dedupeItems(
-            smart.videos,
-            (item: any) => item.snippet?.title || '',
-            (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
-          );
-          fetchedTrends = dedupeItems(
-            smart.posts,
-            (item: any) => item.id || item.text || '',
-            (item: any) => item.url || ''
-          );
-
-          if (fetchedNews.length === 0 && fetchedVideos.length === 0 && fetchedTrends.length === 0) {
-            throw new Error('No content found for this topic.');
-          }
+        if (smartData.error) {
+          throw new Error(smartData.error);
         }
 
-        setNews(fetchedNews);
-        setVideos(fetchedVideos);
-        setTrends(fetchedTrends);
-      } catch (err: any) {
-        console.error(err);
-        setError(err.message || 'An error occurred while fetching data.');
-      } finally {
-        setLoading(false);
-      }
-    };
+        const smart = parseSmartFeed(smartData);
+        if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
+        setTrendContext(smart.trendContext);
 
-    fetchData();
+        fetchedNews = dedupeItems(
+          smart.news,
+          (item: any) => item.title || '',
+          (item: any) => item.link || ''
+        );
+        fetchedVideos = dedupeItems(
+          smart.videos,
+          (item: any) => item.snippet?.title || '',
+          (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
+        );
+        fetchedTrends = dedupeItems(
+          smart.posts,
+          (item: any) => item.id || item.text || '',
+          (item: any) => item.url || ''
+        );
+
+        if (fetchedNews.length === 0 && fetchedVideos.length === 0 && fetchedTrends.length === 0) {
+          throw new Error('No content found for this topic.');
+        }
+      }
+
+      setNews(fetchedNews);
+      setVideos(fetchedVideos);
+      setTrends(fetchedTrends);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'An error occurred while fetching data.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [activeInterest, interests, user.uid, bookmarks.length]);
+
+  useEffect(() => {
+    fetchData(false);
+  }, [fetchData]);
 
   const handleItemClick = async (item: any, type: string) => {
     const title = type === 'news' ? item.title : type === 'video' ? item.snippet?.title : item.name;
@@ -335,16 +343,28 @@ export function Dashboard({ user, userData }: DashboardProps) {
                   )}
                 </div>
 
-                <form onSubmit={handleSearch} className="relative w-full lg:w-96 shrink-0">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search topics..."
-                    className="w-full bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 pl-12 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all shadow-lg"
-                  />
-                </form>
+                <div className="flex items-center gap-2 w-full lg:w-auto shrink-0">
+                  <form onSubmit={handleSearch} className="relative w-full lg:w-96">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search topics..."
+                      className="w-full bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 pl-12 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all shadow-lg"
+                    />
+                  </form>
+                  {activeInterest !== 'Saved' && (
+                    <button
+                      onClick={() => fetchData(true)}
+                      disabled={loading || refreshing}
+                      className="p-2.5 rounded-full bg-surface-primary/60 backdrop-blur-md border border-border-primary text-text-secondary hover:text-text-heading hover:border-indigo-500/50 transition-all disabled:opacity-40 shrink-0"
+                      title="Refresh feed"
+                    >
+                      <RefreshCw className={cn("w-5 h-5", refreshing && "animate-spin")} />
+                    </button>
+                  )}
+                </div>
               </header>
 
               {sourceWarnings.length > 0 && (
@@ -359,7 +379,24 @@ export function Dashboard({ user, userData }: DashboardProps) {
                 </div>
               )}
 
-              {loading ? (
+              <AnimatePresence>
+                {refreshing && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="mb-4 h-1 bg-indigo-500/20 rounded-full overflow-hidden"
+                  >
+                    <motion.div
+                      className="h-full bg-indigo-500 rounded-full w-1/3"
+                      animate={{ x: ['-100%', '300%'] }}
+                      transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut' }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {loading && !refreshing ? (
                 <SkeletonLoader />
               ) : error ? (
                 <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-6 flex items-center gap-4 text-red-400 backdrop-blur-md">

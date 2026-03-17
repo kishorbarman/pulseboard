@@ -9,6 +9,9 @@ Your personalized command center for what's happening now — news, videos, and 
 - **AI summaries & chat** — Get instant Gemini-powered summaries of your entire feed or individual articles, then ask follow-up questions in a conversational thread.
 - **Light & dark mode** — Full theme support with system preference detection and manual toggle.
 - **Bookmarks & data export** — Save articles for later. Export your full history and profile as JSON anytime.
+- **Server-side feed caching** — Feeds are cached per-interest in Firestore with a 12-hour TTL, dropping page loads from ~10s to ~200ms on repeat visits.
+- **Background refresh** — A scheduled job refreshes all cached interests every 12 hours. Stale caches are served instantly while a background refresh runs.
+- **Pull-to-refresh** — Manual refresh button bypasses the cache, fetches live data, and updates the cache for future visits.
 - **Responsive design** — Edge-to-edge mobile layout with a collapsible sidebar and adaptive card grid.
 
 ## How it works
@@ -19,21 +22,39 @@ Browser (React 19 SPA)
     |  HTTP (same origin)
     v
 Express server (server.ts)
-    |-- GET /api/news           --> NewsData.io API
-    |-- GET /api/youtube        --> YouTube Data API v3
-    |-- GET /api/x-trends       --> mock data (no live API)
-    |-- POST /api/log-interaction --> Firestore (Admin SDK)
-    |-- GET /api/personalized-feed --> Firestore vector search
+    |-- GET /api/smart-feed          --> Gemini + News/YouTube/X (cached in Firestore)
+    |-- GET /api/smart-feed-foryou   --> merges per-interest caches for "For You"
+    |-- POST /api/refresh-feeds      --> manual/scheduled cache refresh
+    |-- POST /api/log-interaction    --> Firestore (Admin SDK)
+    |-- GET /api/personalized-feed   --> Firestore vector search
+    |
+    |  Background: 12h interval refreshes all user interests
     |
     |  Vite middleware (dev) / static dist/ (prod)
     v
 Firebase
     |-- Auth (Google sign-in)
-    |-- Firestore (client SDK: bookmarks, user profile)
-    |-- Firestore (Admin SDK: items collection, vector profiles)
+    |-- Firestore: feedCache/{interest}  — cached feed results (12h TTL)
+    |-- Firestore: items/{id}            — content with embeddings
+    |-- Firestore: users/{uid}           — profile, interests, vectorProfile
+    |-- Firestore: users/{uid}/history   — click history
+    |-- Firestore: users/{uid}/bookmarks — saved items
 ```
 
 The Express server proxies all third-party API keys and handles personalization server-side. The React frontend communicates with `/api/*` routes and the Firebase client SDK for auth and bookmarks.
+
+### Feed caching strategy
+
+Feeds are cached **per individual interest** in Firestore (`feedCache/{interest}`), so users with overlapping interests share the same cache. The "For You" feed merges multiple per-interest caches server-side.
+
+| Scenario | Response time | Behavior |
+|----------|--------------|----------|
+| Fresh cache (< 12h) | ~200–500ms | Served directly from Firestore |
+| Stale cache (> 12h) | ~200–500ms | Served immediately, background refresh fires |
+| No cache (first visit) | ~8–12s | Full live fetch, result cached for next time |
+| Pull-to-refresh | ~8–12s | Content stays visible, progress bar shows, cache updated |
+
+The background scheduler collects all unique interests from the `users` collection and refreshes each cache serially every 12 hours. On server startup, an initial cache warm runs after a 10-second delay. Onboarding also triggers a fire-and-forget cache warm for newly selected interests.
 
 ### Personalization loop
 
@@ -41,7 +62,7 @@ The Express server proxies all third-party API keys and handles personalization 
 2. Server appends the click to `users/{uid}/history` in Firestore.
 3. If the item has an embedding, the server recalculates the user's average interest vector from their last 10 interactions and saves it to `users/{uid}.vectorProfile`.
 4. "For You" feed queries `GET /api/personalized-feed` → Firestore `findNearest` (cosine similarity) against stored item embeddings.
-5. Results blend 70% personalized / 30% fresh content from the user's top interest.
+5. Results blend personalized items with fresh cached content from all of the user's interests.
 
 ## Tech stack
 
