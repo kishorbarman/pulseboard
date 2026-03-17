@@ -18,15 +18,12 @@ interface ChatMessage {
 
 export function AIPulse({ news, videos, trends, activeInterest, trendContext }: AIPulseProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [followUp, setFollowUp] = useState('');
   const [responding, setResponding] = useState(false);
   const cachedInterestRef = useRef<string>('');
   const contentRef = useRef<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const hasContent = news.length > 0 || videos.length > 0 || trends.length > 0;
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -37,6 +34,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
   useEffect(() => {
     if (activeInterest !== cachedInterestRef.current) {
       setMessages([]);
+      setIsOpen(false);
       contentRef.current = '';
       cachedInterestRef.current = activeInterest;
     }
@@ -56,46 +54,19 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
     return parts.join('\n\n');
   };
 
-  const generateSummary = async () => {
-    if (loading || !hasContent) return;
-    if (messages.length > 0 && cachedInterestRef.current === activeInterest) {
+  const openInsights = () => {
+    if (!trendContext) return;
+
+    // Already have messages for this interest — just re-open
+    if (messages.length > 0) {
       setIsOpen(true);
       return;
     }
 
-    // If we already have a precomputed trend context, show it instantly
-    if (trendContext) {
-      contentRef.current = buildContentString();
-      setMessages([{ role: 'model', text: trendContext }]);
-      cachedInterestRef.current = activeInterest;
-      setIsOpen(true);
-      return;
-    }
-
-    // Otherwise fall back to generating a summary via Gemini
+    // First open — populate with precomputed summary
+    contentRef.current = buildContentString();
+    setMessages([{ role: 'model', text: trendContext }]);
     setIsOpen(true);
-    setLoading(true);
-    setMessages([]);
-
-    try {
-      const content = buildContentString();
-      contentRef.current = content;
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `You are a news analyst. Summarize the following content in 3-4 concise bullet points covering the key themes and highlights. Use plain text with bullet points (•). Be crisp and insightful.\n\n${content}`,
-      });
-
-      const text = response.text || 'Could not generate summary.';
-      setMessages([{ role: 'model', text }]);
-      cachedInterestRef.current = activeInterest;
-    } catch (e) {
-      console.error('Failed to generate page summary', e);
-      setMessages([{ role: 'model', text: 'Failed to generate summary. Please try again.' }]);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const sendFollowUp = async () => {
@@ -155,7 +126,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
             <div className="flex items-center justify-between p-4 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-indigo-400" />
-                <span className="font-bold text-indigo-400 uppercase tracking-wider text-xs">Page Summary</span>
+                <span className="font-bold text-indigo-400 uppercase tracking-wider text-xs">AI Insights</span>
               </div>
               <button
                 onClick={() => setIsOpen(false)}
@@ -167,28 +138,19 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 pb-3 space-y-3 min-h-0">
-              {loading ? (
-                <div className="flex items-center gap-2 text-text-tertiary py-4">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Analyzing {news.length + videos.length + trends.length} items...
+              {messages.map((msg, i) => (
+                <div key={i} className={msg.role === 'user' ? 'flex justify-end' : ''}>
+                  {msg.role === 'user' ? (
+                    <div className="bg-indigo-500/20 text-text-primary border border-indigo-500/30 rounded-xl rounded-br-sm px-3 py-2 max-w-[85%]">
+                      {msg.text}
+                    </div>
+                  ) : (
+                    <div className="text-text-secondary leading-relaxed whitespace-pre-line">
+                      {msg.text}
+                    </div>
+                  )}
                 </div>
-              ) : messages.length > 0 ? (
-                messages.map((msg, i) => (
-                  <div key={i} className={msg.role === 'user' ? 'flex justify-end' : ''}>
-                    {msg.role === 'user' ? (
-                      <div className="bg-indigo-500/20 text-text-primary border border-indigo-500/30 rounded-xl rounded-br-sm px-3 py-2 max-w-[85%]">
-                        {msg.text}
-                      </div>
-                    ) : (
-                      <div className="text-text-secondary leading-relaxed whitespace-pre-line">
-                        {msg.text}
-                      </div>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <p className="text-text-muted">Click to generate a summary of the current feed.</p>
-              )}
+              ))}
               {responding && (
                 <div className="flex items-center gap-2 text-text-tertiary">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -199,7 +161,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
             </div>
 
             {/* Follow-up input */}
-            {messages.length > 0 && !loading && (
+            {messages.length > 0 && (
               <div className="px-4 pb-4 pt-2 border-t border-border-secondary shrink-0">
                 <div className="flex items-center gap-2">
                   <input
@@ -225,38 +187,33 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
         )}
       </AnimatePresence>
 
-      <motion.button
-        whileHover={{ scale: 1.01 }}
-        whileTap={{ scale: 0.98 }}
-        onClick={generateSummary}
-        disabled={!hasContent}
-        className={`relative flex items-center gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-indigo-500/30 shadow-lg shadow-indigo-500/10 transition-colors disabled:opacity-40 hover:border-indigo-500/50 ${
-          trendContext && !isOpen ? 'px-4 py-3 max-w-xs md:max-w-sm' : 'px-4 py-2.5'
-        }`}
-      >
-        {loading && (
-          <motion.div
-            className="absolute inset-0 rounded-2xl border-2 border-indigo-400"
-            animate={{ scale: [1, 1.02], opacity: [1, 0] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-          />
-        )}
-        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500 shrink-0">
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin text-white" />
-          ) : (
-            <Sparkles className="w-4 h-4 text-white" />
-          )}
-        </div>
-        {trendContext && !isOpen ? (
-          <div className="flex-1 min-w-0 text-left">
-            <p className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-0.5">AI Insights</p>
-            <p className="text-sm text-text-primary leading-snug line-clamp-2">{trendContext}</p>
+      {!isOpen && (
+        <motion.button
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={openInsights}
+          disabled={!trendContext}
+          className={`relative flex items-center gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-indigo-500/30 shadow-lg shadow-indigo-500/10 transition-colors disabled:opacity-40 hover:border-indigo-500/50 ${
+            trendContext ? 'px-4 py-3 max-w-xs md:max-w-sm' : 'px-4 py-2.5'
+          }`}
+        >
+          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500 shrink-0">
+            {!trendContext ? (
+              <Loader2 className="w-4 h-4 animate-spin text-white" />
+            ) : (
+              <Sparkles className="w-4 h-4 text-white" />
+            )}
           </div>
-        ) : (
-          <span className="text-sm font-medium text-text-primary">{loading ? 'Summarizing...' : 'Summarize feed'}</span>
-        )}
-      </motion.button>
+          {trendContext ? (
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-0.5">AI Insights</p>
+              <p className="text-sm text-text-primary leading-snug line-clamp-2">{trendContext}</p>
+            </div>
+          ) : (
+            <span className="text-sm font-medium text-text-muted">Loading insights...</span>
+          )}
+        </motion.button>
+      )}
     </div>
   );
 }
