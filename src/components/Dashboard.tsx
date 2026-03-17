@@ -79,6 +79,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const [error, setError] = useState<string | null>(null);
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
   const [trendContext, setTrendContext] = useState<string>('');
+  const [interestSummaries, setInterestSummaries] = useState<Record<string, string>>({});
   
   // Initialize sidebar state based on window width
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -120,6 +121,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
     setError(null);
     setSourceWarnings([]);
     setTrendContext('');
+    setInterestSummaries({});
     try {
       let fetchedNews: any[] = [];
       let fetchedVideos: any[] = [];
@@ -131,6 +133,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
         videos: data.videos?.items || [],
         posts: data.posts?.posts || [],
         trendContext: data.trendContext || '',
+        interestSummaries: data.interestSummaries || {},
         warnings: data.warnings || [],
         pagination: data.pagination || null,
       });
@@ -158,6 +161,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
 
         if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
         setTrendContext(smart.trendContext);
+        setInterestSummaries(smart.interestSummaries || {});
 
         // Separate personalized items by type
         const pNews = pItems.filter((i: any) => i.type === 'news').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
@@ -194,6 +198,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
         setHasMoreContent(Boolean(smart.pagination?.hasMore) && loadMultiplier < (smart.pagination?.maxLoadMultiplier || maxLoadMultiplier));
         if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
         setTrendContext(smart.trendContext);
+        setInterestSummaries({});
 
         fetchedNews = dedupeItems(
           smart.news,
@@ -482,7 +487,14 @@ export function Dashboard({ user, userData }: DashboardProps) {
         onClose={() => setIsModalOpen(false)} 
         videoId={activeVideoId} 
       />
-      <AIPulse news={news} videos={videos} trends={trends} activeInterest={activeInterest} trendContext={trendContext} />
+      <AIPulse
+        news={news}
+        videos={videos}
+        trends={trends}
+        activeInterest={activeInterest}
+        trendContext={trendContext}
+        interestSummaries={interestSummaries}
+      />
     </div>
   );
 }

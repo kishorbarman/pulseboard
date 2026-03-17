@@ -1,129 +1,203 @@
 # PulseBoard
 
-Your personalized command center for what's happening now — news, videos, and trending topics, all in one place. PulseBoard learns what you care about and surfaces the content that matters most to you.
+PulseBoard is a personalized interest feed that combines **news**, **videos**, and **social posts** into one unified “For You” experience.
 
-## Features
+This README is the product spec + engineering reference for the current implementation.
 
-- **Diverse interest selection** — Choose from 30+ topics across tech, politics, lifestyle, entertainment, finance, and more. Add your own custom topics too.
-- **AI-powered personalization** — Every click teaches PulseBoard what you like. A vector-based "For You" feed uses cosine similarity to surface content tailored to your behavior.
-- **AI summaries & chat** — Get instant Gemini-powered summaries of your entire feed or individual articles, then ask follow-up questions in a conversational thread.
-- **Light & dark mode** — Full theme support with system preference detection and manual toggle.
-- **Bookmarks & data export** — Save articles for later. Export your full history and profile as JSON anytime.
-- **Server-side feed caching** — Feeds are cached per-interest in Firestore with a 12-hour TTL, dropping page loads from ~10s to ~200ms on repeat visits.
-- **Background refresh** — A scheduled job refreshes all cached interests every 12 hours. Stale caches are served instantly while a background refresh runs.
-- **Pull-to-refresh** — Manual refresh button bypasses the cache, fetches live data, and updates the cache for future visits.
-- **Responsive design** — Edge-to-edge mobile layout with a collapsible sidebar and adaptive card grid.
+## 1. Product Summary
 
-## How it works
+### Vision
+Give users a fast, low-clutter command center for what matters across their interests.
 
-```
-Browser (React 19 SPA)
-    |
-    |  HTTP (same origin)
-    v
-Express server (server.ts)
-    |-- GET /api/smart-feed          --> Gemini + News/YouTube/X (cached in Firestore)
-    |-- GET /api/smart-feed-foryou   --> merges per-interest caches for "For You"
-    |-- POST /api/refresh-feeds      --> manual/scheduled cache refresh
-    |-- POST /api/log-interaction    --> Firestore (Admin SDK)
-    |-- GET /api/personalized-feed   --> Firestore vector search
-    |
-    |  Background: 12h interval refreshes all user interests
-    |
-    |  Vite middleware (dev) / static dist/ (prod)
-    v
-Firebase
-    |-- Auth (Google sign-in)
-    |-- Firestore: feedCache/{interest}  — cached feed results (12h TTL)
-    |-- Firestore: items/{id}            — content with embeddings
-    |-- Firestore: users/{uid}           — profile, interests, vectorProfile
-    |-- Firestore: users/{uid}/history   — click history
-    |-- Firestore: users/{uid}/bookmarks — saved items
-```
+### Core promise
+- Relevant content with strong source diversity
+- Fast loading via server-side cache
+- AI-assisted understanding (concise summaries + follow-up chat)
+- Personalization that improves as users interact
 
-The Express server proxies all third-party API keys and handles personalization server-side. The React frontend communicates with `/api/*` routes and the Firebase client SDK for auth and bookmarks.
+### Primary user flow
+1. User selects interests during onboarding (plus optional custom interests).
+2. App fetches and caches per-interest feeds server-side.
+3. “For You” merges interests into a diversified feed.
+4. User clicks/saves content; interactions improve personalization.
+5. AI Insights gives a compact cross-feed summary with drill-down by interest.
 
-### Feed caching strategy
+## 2. Feature Set
 
-Feeds are cached **per individual interest** in Firestore (`feedCache/{interest}`), so users with overlapping interests share the same cache. The "For You" feed merges multiple per-interest caches server-side.
+### Feed ingestion
+- **RSS-first ingestion** for mapped interests (primary source).
+- **NewsData fallback** when RSS is sparse or interest is not curated.
+- **YouTube** ingestion for video candidates.
+- **X posts** ingestion (API when configured; mock fallback behavior in some flows).
 
-| Scenario | Response time | Behavior |
-|----------|--------------|----------|
-| Fresh cache (< 12h) | ~200–500ms | Served directly from Firestore |
-| Stale cache (> 12h) | ~200–500ms | Served immediately, background refresh fires |
-| No cache (first visit) | ~8–12s | Full live fetch, result cached for next time |
-| Pull-to-refresh | ~8–12s | Content stays visible, progress bar shows, cache updated |
+### Ranking and personalization
+- Multi-stage ranking:
+  - Deterministic score (freshness + importance + engagement)
+  - Personalization score from user interests/history signals
+  - Optional Gemini rerank on top-K (enabled by default)
+- For You diversity controls prevent one interest/source from dominating.
 
-The background scheduler collects all unique interests from the `users` collection and refreshes each cache serially every 12 hours. On server startup, an initial cache warm runs after a 10-second delay. Onboarding also triggers a fire-and-forget cache warm for newly selected interests.
+### AI summary experience
+- **For You**: compact cross-feed overview (5–6 bullets max) plus “Expand by interest”.
+- **Card-level summary**: quick TL;DR with follow-up chat.
 
-### Personalization loop
+### UX features
+- Unified card layout for News / YouTube / X.
+- Source and save actions in the 3-dot menu across content types.
+- Compact relative age labels (`10m`, `2h`, `1d`, etc.) at bottom-left.
+- Load-more pagination via `loadMultiplier`.
+- Light/dark theme support.
 
-1. User clicks an item → dashboard calls `POST /api/log-interaction`.
-2. Server appends the click to `users/{uid}/history` in Firestore.
-3. If the item has an embedding, the server recalculates the user's average interest vector from their last 10 interactions and saves it to `users/{uid}.vectorProfile`.
-4. "For You" feed queries `GET /api/personalized-feed` → Firestore `findNearest` (cosine similarity) against stored item embeddings.
-5. Results blend personalized items with fresh cached content from all of the user's interests.
+### Data and user controls
+- Google sign-in via Firebase Auth.
+- Bookmarks and click history in Firestore.
+- Data export and profile reset controls.
 
-## Tech stack
+## 3. System Architecture
 
-- **Frontend:** React 19, Tailwind CSS v4, Framer Motion (`motion/react`)
-- **Backend:** Express, Firebase Admin SDK
-- **AI:** Google Gemini (`@google/genai`, `gemini-3-flash-preview`)
-- **Auth & data:** Firebase Auth (Google), Firestore
-- **Hosting:** Firebase Hosting + Cloud Run
+## Frontend
+- React 19 + Vite + Tailwind v4 + Motion.
+- Main composition in `src/components/Dashboard.tsx`.
+- Talks to backend via `/api/*` and Firebase client SDK for user data/bookmarks.
 
-## Running locally
+## Backend
+- Single Express server (`server.ts`) handles:
+  - API routes
+  - RSS/NewsData/YouTube/X fetching
+  - ranking and summary generation
+  - Firestore caching and personalization signals
+  - Vite middleware in dev / static serving in prod
 
-**Prerequisites:** Node.js, a Firebase project with Auth (Google provider) and Firestore enabled.
+## Hosting
+- Cloud Run for backend.
+- Firebase Hosting for frontend (rewrites `/api/**` to Cloud Run).
 
+## 4. Feed Pipeline (Current)
+
+### Single-interest feed (`/api/smart-feed`)
+1. Generate smart queries (Gemini; cached).
+2. Fetch RSS (primary) + NewsData fallback if needed.
+3. Fetch YouTube and X in parallel.
+4. Run relevance filter.
+5. Rank candidates (deterministic, optional Gemini rerank, personalization at response time).
+6. Persist processed items and write per-interest feed cache.
+7. Return windowed response by `loadMultiplier`.
+
+### For You feed (`/api/smart-feed-foryou`)
+1. Resolve interests.
+2. Read per-interest caches (fresh first, stale-while-revalidate fallback).
+3. Merge and dedupe across interests.
+4. Apply personalization ranking + diversity caps.
+5. Generate compact For You overview.
+6. Return:
+   - `news`, `videos`, `posts`
+   - `trendContext` (compact summary)
+   - `interestSummaries` (expandable detail)
+   - `pagination` metadata
+
+## 5. Caching and Refresh
+
+- Per-interest Firestore cache: `feedCache/{interest}`
+- Cache TTL: **12 hours**
+- Scheduled background refresh: **every 3 hours**
+- Startup warm: delayed initial refresh after server boot
+- Onboarding warm: fire-and-forget refresh for selected interests
+
+## 6. Ranking Spec (Implemented)
+
+Each item gets `_rank` fields:
+- `freshness`
+- `importance`
+- `engagement`
+- `personalization`
+- `baseScore`
+- `geminiImportance`
+- `finalScore`
+
+### Personalization signals
+Built from Firestore user profile + recent history:
+- selected interests
+- title token overlap with clicked history
+- per-type preference (`news`, `video`, `trend`)
+
+### Gemini reranker
+- Enabled by default.
+- Disable with `ENABLE_GEMINI_RERANK=false`.
+- Top-K controlled by `GEMINI_RERANK_TOP_K` (default 15, clamped).
+
+### Ranking observability
+- `GET /api/ranking-debug` (recent debug keys)
+- `GET /api/ranking-debug?key=<debugKey>` (score breakdown snapshot)
+
+## 7. API Surface (Key Routes)
+
+- `GET /api/smart-feed`
+  - Query: `q`, `userId`, `refresh`, `loadMultiplier`, `debugKey`
+- `GET /api/smart-feed-foryou`
+  - Query: `interests`, `userId`, `refresh`, `loadMultiplier`, `debugKey`
+- `POST /api/refresh-feeds`
+  - Body: `{ interests: string[] }`
+- `POST /api/log-interaction`
+- `GET /api/personalized-feed?userId=...`
+- `GET /api/news-metrics`
+- `GET /api/ranking-debug`
+
+## 8. Data Model (Firestore)
+
+- `items/{id}`: normalized stored content + sentiment + metadata
+- `feedCache/{interest}`: cached feed bundles
+- `users/{uid}`: profile, interests, vector/profile metadata
+- `users/{uid}/history`: click history
+- `users/{uid}/bookmarks`: saved items
+
+## 9. Local Development
+
+### Prerequisites
+- Node.js
+- Firebase project (Auth + Firestore)
+- API keys as needed
+
+### Setup
 ```bash
 npm install
 cp .env.example .env.local
-# Fill in all values in .env.local
+# fill env values
 npm run dev
 ```
 
-The app runs on `http://localhost:3000`. See `.env.example` for required environment variables.
+App runs at [http://localhost:3000](http://localhost:3000).
 
-## Deployment
+### Useful commands
+```bash
+npm run dev       # server + Vite middleware
+npm run lint      # TypeScript type-check
+npm run build     # production frontend build
+npm run deploy    # Cloud Run + Firebase Hosting
+```
 
-Deploys to **Cloud Run** (Express server) + **Firebase Hosting** (React frontend). Firebase Hosting rewrites `/api/**` requests to the Cloud Run service.
+## 10. Environment Variables
 
-### Prerequisites
+Commonly used:
+- `GEMINI_API_KEY`
+- `NEWSDATA_API_KEY`
+- `YOUTUBE_API_KEY`
+- `TWITTER_BEARER_TOKEN` (if using real X API)
+- `VITE_FIREBASE_*`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+
+Ranking flags:
+- `ENABLE_GEMINI_RERANK` (`false` to disable)
+- `GEMINI_RERANK_TOP_K` (default `15`)
+
+## 11. Deployment
 
 ```bash
-brew install --cask google-cloud-sdk
-npm install -g firebase-tools
-
-gcloud auth login
-firebase login
-
-gcloud config set project YOUR_PROJECT_ID
-firebase use YOUR_PROJECT_ID
-gcloud services enable run.googleapis.com
+npm run deploy:server   # Cloud Run backend
+npm run deploy:hosting  # Firebase Hosting frontend
+npm run deploy          # both
 ```
 
-### Environment variables
-
-Create `.env.cloudrun.yaml` from `.env.example` with production values:
-
-```yaml
-GEMINI_API_KEY: "..."
-NEWSDATA_API_KEY: "..."
-YOUTUBE_API_KEY: "..."
-VITE_FIREBASE_PROJECT_ID: "..."
-FIREBASE_CLIENT_EMAIL: "..."
-FIREBASE_PRIVATE_KEY: "..."
-```
-
-### Deploy
-
-```bash
-npm run deploy:server   # Express → Cloud Run
-npm run deploy:hosting  # React → Firebase Hosting
-npm run deploy          # Both in sequence
-```
-
-### First deploy note
-
-After the first `deploy:server`, Cloud Run assigns a service URL. Firebase Hosting routes `/api/**` to the `pulseboard-server` service in `us-central1` via the native Cloud Run integration in `firebase.json`.
+Production:
+- Hosting: <https://pulse-board-2b7b7.web.app>
+- Backend: <https://pulseboard-server-232983174887.us-central1.run.app>

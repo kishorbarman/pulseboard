@@ -840,6 +840,84 @@ ${parts.join('\n\n')}`;
   }
 }
 
+function fallbackForYouOverview(
+  interests: string[],
+  news: any[],
+  videos: any[],
+  posts: any[]
+): string {
+  const topNews = news.slice(0, 2).map((n: any) => n.title).filter(Boolean);
+  const topVideos = videos.slice(0, 1).map((v: any) => v.snippet?.title).filter(Boolean);
+  const topPosts = posts.slice(0, 1).map((p: any) => (p.text || '').slice(0, 90)).filter(Boolean);
+  const themes = interests.slice(0, 3).join(', ');
+  const bullets = [
+    `• Cross-feed focus: ${themes || 'your selected interests'}.`,
+    topNews[0] ? `• Key headline: ${topNews[0]}.` : '',
+    topNews[1] ? `• Also developing: ${topNews[1]}.` : '',
+    topVideos[0] ? `• One video to watch: ${topVideos[0]}.` : '',
+    topPosts[0] ? `• Social pulse: ${topPosts[0]}...` : '',
+    '• Watchlist: policy shifts, market moves, and product launches tied to your interests.',
+  ].filter(Boolean);
+  return bullets.slice(0, 6).join('\n');
+}
+
+async function generateForYouOverview(
+  interests: string[],
+  news: any[],
+  videos: any[],
+  posts: any[]
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return fallbackForYouOverview(interests, news, videos, posts);
+
+  const topNews = news.slice(0, 8).map((n: any) => `• ${n.title || ''}`).join('\n');
+  const topVideos = videos.slice(0, 5).map((v: any) => `• ${v.snippet?.title || ''}`).join('\n');
+  const topPosts = posts.slice(0, 5).map((p: any) => `• ${(p.text || '').slice(0, 120)}`).join('\n');
+  const prompt = `You are writing a compact "For You" feed overview.
+
+User interests: ${interests.join(', ')}
+
+Write exactly 5 to 6 bullets total:
+1) Top 3 cross-feed themes (across all interests)
+2) What's newly important now (1 to 2 bullets)
+3) Watchlist (1 bullet)
+
+Rules:
+- Max 16 words per bullet
+- Avoid repeating the same entity
+- Use concrete names/events, not generic filler
+- No intro sentence, no section headers
+- Return bullets only, each line starts with "• "
+
+NEWS:
+${topNews || '• none'}
+
+VIDEOS:
+${topVideos || '• none'}
+
+POSTS:
+${topPosts || '• none'}`;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+    });
+    const text = (response.text || '').trim();
+    if (!text) return fallbackForYouOverview(interests, news, videos, posts);
+    const lines = text
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .map(l => (l.startsWith('•') ? l : `• ${l.replace(/^[-*]\s*/, '')}`));
+    return lines.slice(0, 6).join('\n');
+  } catch (e) {
+    console.warn('[ForYouOverview] generation failed:', e);
+    return fallbackForYouOverview(interests, news, videos, posts);
+  }
+}
+
 // Gemini-based relevance filtering
 async function filterByRelevance(items: any[], topic: string, getTitleFn: (item: any) => string): Promise<any[]> {
   if (items.length < 5) return items; // Not worth filtering tiny sets
@@ -1457,25 +1535,25 @@ function refreshInterestsInBackground(interests: string[]): void {
 }
 
 // Merge per-interest feed caches into a combined "For You" response
-function mergeInterestCaches(
+async function mergeInterestCaches(
   caches: { interest: string; data: FeedCacheDocument }[],
   interests: string[],
   loadMultiplier = 1,
   personalizationSignals: PersonalizationSignals | null = null,
   debugKey?: string,
   userId?: string
-): any {
+): Promise<any> {
   const allNews: any[] = [];
   const allVideos: any[] = [];
   const allPosts: any[] = [];
-  const allSummaries: string[] = [];
+  const interestSummaries: Record<string, string> = {};
   const allWarnings: string[] = [];
 
   for (const { interest, data } of caches) {
     allNews.push(...data.news.map((i: any) => ({ ...sanitizeNewsItemForResponse(i), _interest: interest })));
     allVideos.push(...data.videos.map((i: any) => ({ ...i, _interest: interest })));
     allPosts.push(...data.posts.map((i: any) => ({ ...i, _interest: interest })));
-    if (data.summary) allSummaries.push(data.summary);
+    if (data.summary) interestSummaries[interest] = data.summary;
     if (data.warnings) allWarnings.push(...data.warnings);
   }
 
@@ -1538,11 +1616,14 @@ function mergeInterestCaches(
     });
   }
 
+  const forYouOverview = await generateForYouOverview(interests, rankedNews, rankedVideos, rankedPosts);
+
   return {
     news: { results: diverseNews },
     videos: { items: diverseVideos },
     posts: { posts: diversePosts },
-    trendContext: allSummaries.join('\n\n'),
+    trendContext: forYouOverview,
+    interestSummaries,
     warnings: [...new Set(allWarnings)],
     fromCache: true,
     pagination: {
@@ -1928,7 +2009,7 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
       const allCached = cacheResults.every(r => r.cache !== null);
       if (allCached) {
         console.log(`[smart-feed-foryou] Full cache hit for [${interests.join(', ')}]`);
-        return res.json(mergeInterestCaches(
+        return res.json(await mergeInterestCaches(
           cacheResults.map(r => ({ interest: r.interest, data: r.cache! })),
           interests,
           loadMultiplier,
@@ -1952,7 +2033,7 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
         console.log(`[smart-feed-foryou] Serving stale caches, refreshing in background`);
         const staleInterests = staleResults.filter(r => !r.cache).map(r => r.interest);
         refreshInterestsInBackground(staleInterests);
-        return res.json(mergeInterestCaches(
+        return res.json(await mergeInterestCaches(
           staleResults.map(r => ({ interest: r.interest, data: (r.cache || r.staleCache)! })),
           interests,
           loadMultiplier,
@@ -1978,7 +2059,7 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
     );
 
     res.json({
-      ...mergeInterestCaches(liveResults, interests, loadMultiplier, personalizationSignals, debugKey || undefined, userId || undefined),
+      ...(await mergeInterestCaches(liveResults, interests, loadMultiplier, personalizationSignals, debugKey || undefined, userId || undefined)),
       fromCache: false,
     });
   } catch (error) {

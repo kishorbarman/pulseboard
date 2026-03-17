@@ -9,6 +9,7 @@ interface AIPulseProps {
   trends: any[];
   activeInterest: string;
   trendContext?: string;
+  interestSummaries?: Record<string, string>;
 }
 
 interface ChatMessage {
@@ -16,11 +17,12 @@ interface ChatMessage {
   text: string;
 }
 
-export function AIPulse({ news, videos, trends, activeInterest, trendContext }: AIPulseProps) {
+export function AIPulse({ news, videos, trends, activeInterest, trendContext, interestSummaries = {} }: AIPulseProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [followUp, setFollowUp] = useState('');
   const [responding, setResponding] = useState(false);
+  const [showByInterest, setShowByInterest] = useState(false);
   const cachedInterestRef = useRef<string>('');
   const contentRef = useRef<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -37,6 +39,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
       setIsOpen(false);
       contentRef.current = '';
       cachedInterestRef.current = activeInterest;
+      setShowByInterest(false);
     }
   }, [activeInterest]);
 
@@ -159,6 +162,28 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
               )}
               <div ref={messagesEndRef} />
             </div>
+
+            {activeInterest === 'For You' && Object.keys(interestSummaries).length > 0 && (
+              <div className="px-4 pb-2">
+                <button
+                  type="button"
+                  onClick={() => setShowByInterest(v => !v)}
+                  className="text-xs font-semibold text-[var(--th-accent-text)] hover:underline"
+                >
+                  {showByInterest ? 'Hide by-interest details' : 'Expand by interest'}
+                </button>
+                {showByInterest && (
+                  <div className="mt-2 space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {Object.entries(interestSummaries).map(([interest, summary]) => (
+                      <details key={interest} className="rounded-lg border border-border-secondary bg-surface-secondary/30 px-3 py-2">
+                        <summary className="cursor-pointer text-xs font-semibold text-text-primary">{interest}</summary>
+                        <p className="mt-2 text-xs text-text-secondary whitespace-pre-line leading-relaxed">{summary}</p>
+                      </details>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Follow-up input */}
             {messages.length > 0 && (
