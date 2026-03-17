@@ -113,7 +113,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
   };
 
   return (
-    <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-50 flex flex-col items-end gap-4">
+    <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-30 flex flex-col items-end gap-4">
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -193,8 +193,8 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
           whileTap={{ scale: 0.98 }}
           onClick={openInsights}
           disabled={!trendContext}
-          className={`relative flex items-center gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-indigo-500/30 shadow-lg shadow-indigo-500/10 transition-colors disabled:opacity-40 hover:border-indigo-500/50 ${
-            trendContext ? 'px-4 py-3 max-w-xs md:max-w-sm' : 'px-4 py-2.5'
+          className={`relative flex items-center gap-2 md:gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-indigo-500/30 shadow-lg shadow-indigo-500/10 transition-colors disabled:opacity-40 hover:border-indigo-500/50 px-3 py-2 md:py-3 ${
+            trendContext ? 'md:px-4 md:max-w-sm' : 'md:px-4'
           }`}
         >
           <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500 shrink-0">
@@ -204,13 +204,14 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
               <Sparkles className="w-4 h-4 text-white" />
             )}
           </div>
+          <span className="text-sm font-semibold text-indigo-400 md:hidden">{trendContext ? 'Insights' : 'Loading...'}</span>
           {trendContext ? (
-            <div className="flex-1 min-w-0 text-left">
+            <div className="hidden md:block flex-1 min-w-0 text-left">
               <p className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-0.5">AI Insights</p>
               <p className="text-sm text-text-primary leading-snug line-clamp-2">{trendContext}</p>
             </div>
           ) : (
-            <span className="text-sm font-medium text-text-muted">Loading insights...</span>
+            <span className="hidden md:inline text-sm font-medium text-text-muted">Loading insights...</span>
           )}
         </motion.button>
       )}

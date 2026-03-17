@@ -135,7 +135,6 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
               )}
             >
               <Sparkles className="w-3 h-3" />
-              AI
             </button>
             {sentiment !== 'Neutral' && (
               <span className={cn(

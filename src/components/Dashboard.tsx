@@ -322,18 +322,18 @@ export function Dashboard({ user, userData }: DashboardProps) {
                   >
                     <Menu className="w-6 h-6" />
                   </button>
-                  <div>
-                    <h2 className="text-3xl md:text-clamp-xl font-black tracking-tight text-text-heading mb-1 drop-shadow-lg leading-none">
-                      {activeInterest}
-                    </h2>
-                    <p className="text-text-secondary font-medium text-sm md:text-base">
-                      {activeInterest === 'For You'
-                        ? 'A personalized mix based on your clicks and interests.'
-                        : activeInterest === 'Saved'
-                        ? 'Your bookmarked articles, videos, and trends.'
-                        : 'Curated updates, videos, and trends based on your interests.'}
-                    </p>
-                  </div>
+                  {(activeInterest === 'For You' || activeInterest === 'Saved') && (
+                    <div>
+                      <h2 className="text-3xl md:text-clamp-xl font-black tracking-tight text-text-heading mb-1 drop-shadow-lg leading-none">
+                        {activeInterest}
+                      </h2>
+                      <p className="text-text-secondary font-medium text-sm md:text-base">
+                        {activeInterest === 'For You'
+                          ? 'Curated for you.'
+                          : 'Your bookmarked articles, videos, and trends.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <form onSubmit={handleSearch} className="relative w-full lg:w-96 shrink-0">

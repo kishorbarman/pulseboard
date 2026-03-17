@@ -102,7 +102,6 @@ export function VideoCard({ video, onClick, className = '', isBookmarked, onBook
               )}
             >
               <Sparkles className="w-3 h-3" />
-              AI
             </div>
             {sentiment !== 'Neutral' && (
               <span className={cn(
