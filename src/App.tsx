@@ -66,7 +66,7 @@ export default function App() {
   if (loading) {
     return (
       <div className="min-h-screen bg-surface-base flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+        <Loader2 className="w-8 h-8 text-[var(--th-accent)] animate-spin" />
       </div>
     );
   }
@@ -80,8 +80,9 @@ export default function App() {
           className="w-full max-w-2xl p-8 bg-surface-primary/50 border border-border-primary rounded-3xl shadow-2xl backdrop-blur-xl"
         >
           <div className="flex items-center gap-4 mb-6 pb-6 border-b border-border-primary">
-            <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center shrink-0">
-              <AlertTriangle className="w-6 h-6 text-amber-500" />
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border"
+                 style={{ backgroundColor: 'var(--th-warning-bg)', borderColor: 'var(--th-warning-border)' }}>
+              <AlertTriangle className="w-6 h-6 text-[var(--th-warning-text)]" />
             </div>
             <div>
               <h1 className="text-xl font-bold text-text-heading">Configuration Required</h1>
@@ -92,7 +93,7 @@ export default function App() {
           <div className="space-y-4 text-sm text-text-secondary">
             <p>To use PulseBoard, you need to configure Firebase authentication and Firestore.</p>
             <ol className="list-decimal list-inside space-y-2 ml-2">
-              <li>Go to the <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">Firebase Console</a> and create a project.</li>
+              <li>Go to the <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-[var(--th-accent-text)] hover:underline">Firebase Console</a> and create a project.</li>
               <li>Enable <strong>Authentication</strong> (Google provider) and <strong>Firestore Database</strong>.</li>
               <li>Register a web app to get your Firebase config.</li>
               <li>Open the <strong>Secrets</strong> panel in AI Studio and add the following variables:</li>
@@ -120,10 +121,10 @@ export default function App() {
           animate={{ opacity: 1, scale: 1 }}
           className="w-full max-w-md p-6 md:p-8 bg-surface-primary/50 border border-border-primary rounded-3xl shadow-2xl backdrop-blur-xl text-center"
         >
-          <div className="w-16 h-16 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Compass className="w-8 h-8 text-indigo-400" />
+          <div className="w-16 h-16 bg-[var(--th-accent-soft)] rounded-2xl flex items-center justify-center mx-auto mb-6 border border-[var(--th-accent-border)]">
+            <Compass className="w-8 h-8 text-[var(--th-accent-text)]" />
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent mb-3">
+          <h1 className="text-3xl font-bold text-[var(--th-accent-text)] mb-3">
             PulseBoard
           </h1>
           <p className="text-text-tertiary mb-8">
@@ -151,7 +152,7 @@ export default function App() {
   if (!userData) {
     return (
       <div className="min-h-screen bg-surface-base flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+        <Loader2 className="w-8 h-8 text-[var(--th-accent)] animate-spin" />
       </div>
     );
   }

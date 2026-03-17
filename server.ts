@@ -3,6 +3,8 @@ import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { Firestore, FieldValue, FieldPath } from "@google-cloud/firestore";
 import { GoogleGenAI } from "@google/genai";
+import Parser from "rss-parser";
+import { getRssFeedsForInterest } from "./rss-feeds.ts";
 
 dotenv.config();
 
@@ -17,11 +19,95 @@ interface FeedCacheDocument {
   updatedAt: FirebaseFirestore.Timestamp;
 }
 
+function sanitizeForFirestore<T = any>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeForFirestore(item))
+      .filter((item) => item !== undefined) as T;
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value as Record<string, any>)) {
+      const sanitized = sanitizeForFirestore(v);
+      if (sanitized !== undefined) out[k] = sanitized;
+    }
+    return out as T;
+  }
+  return value;
+}
+
 const FEED_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const RSS_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
+const RSS_MAX_FEEDS_PER_INTEREST = 4;
+const RSS_MAX_ITEMS_PER_INTEREST = 30;
+const RSS_MIN_RESULTS_BEFORE_NEWSDATA_FALLBACK = 3;
+const FEED_MAX_LOAD_MULTIPLIER = 4;
+const SINGLE_BASE_NEWS_LIMIT = 20;
+const SINGLE_BASE_VIDEO_LIMIT = 12;
+const SINGLE_BASE_POST_LIMIT = 12;
+const FORYOU_BASE_NEWS_LIMIT = 24;
+const FORYOU_BASE_VIDEO_LIMIT = 14;
+const FORYOU_BASE_POST_LIMIT = 12;
+const FORYOU_PER_INTEREST_NEWS_LIMIT = 6;
+const FORYOU_PER_INTEREST_VIDEO_LIMIT = 4;
+const FORYOU_PER_INTEREST_POST_LIMIT = 4;
+const ENABLE_GEMINI_RERANK = process.env.ENABLE_GEMINI_RERANK !== 'false';
+const GEMINI_RERANK_TOP_K = Math.max(5, Math.min(30, Number(process.env.GEMINI_RERANK_TOP_K || 15)));
 const currentlyRefreshing = new Set<string>();
+const rssParser = new Parser();
+
+interface NewsIngestionStats {
+  runs: number;
+  rssItems: number;
+  newsDataItems: number;
+  finalItems: number;
+  fallbackRuns: number;
+  lastUpdatedAt: string;
+}
+
+const newsIngestionMetrics = new Map<string, NewsIngestionStats>();
+
+function logNewsIngestionMetrics(
+  topic: string,
+  rssItems: number,
+  newsDataItems: number,
+  finalItems: number,
+  usedFallback: boolean,
+  context: string
+): void {
+  const key = topic.trim().toLowerCase();
+  const current = newsIngestionMetrics.get(key) || {
+    runs: 0,
+    rssItems: 0,
+    newsDataItems: 0,
+    finalItems: 0,
+    fallbackRuns: 0,
+    lastUpdatedAt: new Date().toISOString(),
+  };
+
+  const updated: NewsIngestionStats = {
+    runs: current.runs + 1,
+    rssItems: current.rssItems + rssItems,
+    newsDataItems: current.newsDataItems + newsDataItems,
+    finalItems: current.finalItems + finalItems,
+    fallbackRuns: current.fallbackRuns + (usedFallback ? 1 : 0),
+    lastUpdatedAt: new Date().toISOString(),
+  };
+  newsIngestionMetrics.set(key, updated);
+
+  console.log(
+    `[NewsMetrics] context=${context} topic="${topic}" rss=${rssItems} newsdata=${newsDataItems} final=${finalItems} fallback=${usedFallback} runs=${updated.runs} cumulativeRss=${updated.rssItems} cumulativeNewsData=${updated.newsDataItems} cumulativeFinal=${updated.finalItems} cumulativeFallbackRuns=${updated.fallbackRuns}`
+  );
+}
 
 function getFeedCacheKey(interest: string): string {
   return interest.toLowerCase().trim();
+}
+
+function parseLoadMultiplier(raw: unknown): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(FEED_MAX_LOAD_MULTIPLIER, Math.floor(parsed)));
 }
 
 async function readFeedCache(interest: string): Promise<FeedCacheDocument | null> {
@@ -57,11 +143,12 @@ async function writeFeedCache(interest: string, data: Omit<FeedCacheDocument, 'u
   if (!firestore) return;
   const key = getFeedCacheKey(interest);
   try {
+    const safeData = sanitizeForFirestore(data);
     await firestore.collection('feedCache').doc(key).set({
-      ...data,
+      ...safeData,
       updatedAt: FieldValue.serverTimestamp(),
     });
-    console.log(`[FeedCache] Wrote cache for "${interest}" (${data.news.length} news, ${data.videos.length} videos, ${data.posts.length} posts)`);
+    console.log(`[FeedCache] Wrote cache for "${interest}" (${safeData.news.length} news, ${safeData.videos.length} videos, ${safeData.posts.length} posts)`);
   } catch (e) {
     console.error(`[FeedCache] Error writing cache for "${interest}":`, e);
   }
@@ -413,6 +500,291 @@ function ensureDiversity<T>(
   return result;
 }
 
+type ContentType = 'news' | 'video' | 'trend';
+
+interface RankBreakdown {
+  freshness: number;
+  importance: number;
+  engagement: number;
+  personalization: number;
+  baseScore: number;
+  geminiImportance: number;
+  finalScore: number;
+}
+
+interface PersonalizationSignals {
+  userId: string;
+  interests: string[];
+  interestSet: Set<string>;
+  historyTokens: Set<string>;
+  typePreference: Record<ContentType, number>;
+}
+
+interface RankDebugEntry {
+  key: string;
+  generatedAt: string;
+  userId?: string;
+  topic?: string;
+  mode: 'single' | 'foryou';
+  counts: { news: number; videos: number; posts: number };
+  top: {
+    news: any[];
+    videos: any[];
+    posts: any[];
+  };
+}
+
+const personalizationCache = new Map<string, { cachedAt: number; data: PersonalizationSignals }>();
+const PERSONALIZATION_CACHE_TTL_MS = 5 * 60 * 1000;
+const rankingDebugMap = new Map<string, RankDebugEntry>();
+const RANK_DEBUG_MAX_KEYS = 80;
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function normalizeWhitespace(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function tokenizeForRanking(text: string): string[] {
+  const stop = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'about', 'your', 'have', 'been', 'are', 'was', 'will', 'you', 'has']);
+  return normalizeWhitespace(text)
+    .split(' ')
+    .filter(t => t.length >= 3 && !stop.has(t))
+    .slice(0, 30);
+}
+
+function getItemType(item: any): ContentType {
+  if (item?.text && item?.author) return 'trend';
+  if (item?.snippet || item?.id?.videoId || item?._subscriberCount !== undefined) return 'video';
+  return 'news';
+}
+
+function getItemTitle(item: any, type: ContentType): string {
+  if (type === 'news') return String(item?.title || '');
+  if (type === 'video') return String(item?.snippet?.title || item?.title || '');
+  return String(item?.text || item?.name || '');
+}
+
+function getItemTimestampMs(item: any, type: ContentType): number | null {
+  const raw = type === 'news'
+    ? item?.pubDate
+    : type === 'video'
+      ? item?.snippet?.publishedAt
+      : item?.created_at;
+  if (!raw) return null;
+  const ts = Date.parse(raw);
+  return Number.isNaN(ts) ? null : ts;
+}
+
+function getSourcePrior(item: any, type: ContentType): number {
+  if (type !== 'news') return 0.55;
+  const source = String(item?.source_id || '').toLowerCase();
+  const high = ['reuters', 'associated press', 'bloomberg', 'wall street journal', 'financial times', 'bbc', 'npr', 'economist'];
+  const medium = ['the verge', 'ars technica', 'techcrunch', 'wired', 'cnbc', 'marketwatch', 'yahoo'];
+  if (high.some(s => source.includes(s))) return 0.95;
+  if (medium.some(s => source.includes(s))) return 0.8;
+  return 0.62;
+}
+
+function computeFreshnessScore(item: any, type: ContentType): number {
+  const ts = getItemTimestampMs(item, type);
+  if (!ts) return 0.45;
+  const ageHours = Math.max(0, (Date.now() - ts) / (1000 * 60 * 60));
+  if (ageHours <= 6) return 1;
+  if (ageHours <= 24) return 0.9;
+  if (ageHours <= 48) return 0.76;
+  if (ageHours <= 72) return 0.64;
+  if (ageHours <= 168) return 0.45;
+  return 0.3;
+}
+
+function computeImportanceScore(item: any, type: ContentType): number {
+  const title = getItemTitle(item, type).toLowerCase();
+  const highSignalWords = ['breaking', 'launch', 'earnings', 'acquires', 'acquisition', 'policy', 'regulation', 'crisis', 'war', 'security'];
+  const keywordBoost = highSignalWords.some(w => title.includes(w)) ? 0.12 : 0;
+
+  if (type === 'news') {
+    return clamp01(0.48 + getSourcePrior(item, type) * 0.4 + keywordBoost);
+  }
+  if (type === 'video') {
+    const subs = Number(item?._subscriberCount || 0);
+    const normalizedSubs = clamp01(Math.log10(Math.max(1, subs)) / 7);
+    return clamp01(0.4 + normalizedSubs * 0.45 + keywordBoost);
+  }
+  const metrics = item?.metrics || {};
+  const engagement = (metrics.likes || 0) + (metrics.retweets || 0) * 2 + (metrics.replies || 0);
+  const normalizedEngagement = clamp01(Math.log10(Math.max(1, engagement + 1)) / 5);
+  return clamp01(0.38 + normalizedEngagement * 0.5 + keywordBoost);
+}
+
+function computeEngagementScore(item: any, type: ContentType): number {
+  if (type === 'trend') {
+    const metrics = item?.metrics || {};
+    const eng = (metrics.likes || 0) + (metrics.retweets || 0) * 2 + (metrics.replies || 0);
+    return clamp01(Math.log10(Math.max(1, eng + 1)) / 5);
+  }
+  if (type === 'video') {
+    const subs = Number(item?._subscriberCount || 0);
+    return clamp01(Math.log10(Math.max(1, subs + 1)) / 7);
+  }
+  return 0.45;
+}
+
+function baseRankScore(item: any, type: ContentType): RankBreakdown {
+  const freshness = computeFreshnessScore(item, type);
+  const importance = computeImportanceScore(item, type);
+  const engagement = computeEngagementScore(item, type);
+  const baseScore = clamp01(0.38 * freshness + 0.42 * importance + 0.2 * engagement);
+  return {
+    freshness,
+    importance,
+    engagement,
+    personalization: 0,
+    baseScore,
+    geminiImportance: 0,
+    finalScore: baseScore,
+  };
+}
+
+function getInterestSignal(item: any): string {
+  return String(item?._interest || '').toLowerCase().trim();
+}
+
+function computePersonalizationScore(item: any, type: ContentType, signals?: PersonalizationSignals | null): number {
+  if (!signals) return 0;
+  const itemInterest = getInterestSignal(item);
+  const interestMatch = itemInterest && signals.interestSet.has(itemInterest) ? 1 : 0.35;
+  const titleTokens = tokenizeForRanking(getItemTitle(item, type));
+  const overlap = titleTokens.filter(t => signals.historyTokens.has(t)).length;
+  const overlapScore = clamp01(overlap / 6);
+  const typeScore = clamp01(signals.typePreference[type] || 0.33);
+  return clamp01(0.45 * interestMatch + 0.35 * overlapScore + 0.2 * typeScore);
+}
+
+function attachBaseRank(items: any[], type: ContentType): any[] {
+  return items.map(item => {
+    const rank = baseRankScore(item, type);
+    return { ...item, _rank: rank };
+  });
+}
+
+function applyPersonalizationRank(items: any[], type: ContentType, signals?: PersonalizationSignals | null): any[] {
+  return [...items]
+    .map(item => {
+      const prev = item?._rank || baseRankScore(item, type);
+      const personalization = computePersonalizationScore(item, type, signals);
+      const finalScore = clamp01(prev.baseScore * 0.72 + personalization * 0.28 + prev.geminiImportance * 0.12);
+      return {
+        ...item,
+        _rank: {
+          ...prev,
+          personalization,
+          finalScore,
+        } as RankBreakdown,
+      };
+    })
+    .sort((a, b) => (b?._rank?.finalScore || 0) - (a?._rank?.finalScore || 0));
+}
+
+async function maybeApplyGeminiRerank(items: any[], type: ContentType, topic: string): Promise<any[]> {
+  if (!ENABLE_GEMINI_RERANK || items.length === 0) return items;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return items;
+  const top = items.slice(0, GEMINI_RERANK_TOP_K);
+  const lines = top.map((item, idx) => `${idx}. ${getItemTitle(item, type).slice(0, 180)}`).join('\n');
+  const prompt = `You are ranking feed items by global importance for topic "${topic}".
+
+Rate each item from 0 to 100 based on: impact, urgency, and user value right now.
+Return ONLY JSON array objects like [{"index":0,"importance":78}] for all provided indices.
+
+ITEMS:
+${lines}`;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+    });
+    const text = response.text || '';
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return items;
+    const parsed = JSON.parse(jsonMatch[0]) as Array<{ index: number; importance: number }>;
+    const byIndex = new Map<number, number>();
+    for (const row of parsed) {
+      if (Number.isInteger(row.index)) byIndex.set(row.index, clamp01((Number(row.importance) || 0) / 100));
+    }
+    return items.map((item, idx) => {
+      const prev = item?._rank || baseRankScore(item, type);
+      if (idx >= GEMINI_RERANK_TOP_K) return item;
+      const gem = byIndex.get(idx) ?? 0;
+      const finalScore = clamp01(prev.baseScore * 0.78 + gem * 0.22);
+      return {
+        ...item,
+        _rank: {
+          ...prev,
+          geminiImportance: gem,
+          finalScore,
+        } as RankBreakdown,
+      };
+    }).sort((a, b) => (b?._rank?.finalScore || 0) - (a?._rank?.finalScore || 0));
+  } catch (e) {
+    console.warn(`[Rank] Gemini rerank failed (${type}, ${topic}):`, e);
+    return items;
+  }
+}
+
+async function getPersonalizationSignals(userId?: string | null): Promise<PersonalizationSignals | null> {
+  if (!firestore || !userId) return null;
+  const key = String(userId);
+  const cached = personalizationCache.get(key);
+  if (cached && (Date.now() - cached.cachedAt) <= PERSONALIZATION_CACHE_TTL_MS) return cached.data;
+
+  try {
+    const userDoc = await firestore.collection('users').doc(key).get();
+    const interests = Array.isArray(userDoc.data()?.interests) ? userDoc.data()!.interests as string[] : [];
+    const historySnap = await firestore.collection('users').doc(key).collection('history').orderBy('clickedAt', 'desc').limit(80).get();
+    const typeCounts: Record<ContentType, number> = { news: 1, video: 1, trend: 1 };
+    const tokens = new Set<string>();
+    for (const doc of historySnap.docs) {
+      const row: any = doc.data();
+      const t = String(row?.type || '');
+      if (t === 'news' || t === 'video' || t === 'trend') typeCounts[t] += 1;
+      for (const token of tokenizeForRanking(String(row?.title || ''))) {
+        tokens.add(token);
+      }
+    }
+    const total = typeCounts.news + typeCounts.video + typeCounts.trend;
+    const data: PersonalizationSignals = {
+      userId: key,
+      interests,
+      interestSet: new Set(interests.map(i => i.toLowerCase().trim())),
+      historyTokens: tokens,
+      typePreference: {
+        news: typeCounts.news / total,
+        video: typeCounts.video / total,
+        trend: typeCounts.trend / total,
+      },
+    };
+    personalizationCache.set(key, { cachedAt: Date.now(), data });
+    return data;
+  } catch (e) {
+    console.warn('[Rank] Failed to load personalization signals:', e);
+    return null;
+  }
+}
+
+function captureRankingDebug(entry: RankDebugEntry): void {
+  rankingDebugMap.set(entry.key, entry);
+  if (rankingDebugMap.size > RANK_DEBUG_MAX_KEYS) {
+    const oldestKey = rankingDebugMap.keys().next().value;
+    if (oldestKey) rankingDebugMap.delete(oldestKey);
+  }
+}
+
 // Generate a detailed summary of the actual fetched content for the AI Insights panel
 async function generateFeedSummary(
   topic: string,
@@ -540,6 +912,7 @@ try {
     if (clientEmail && privateKey) {
       firestore = new Firestore({
         projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+        ignoreUndefinedProperties: true,
         credentials: {
           client_email: clientEmail,
           private_key: privateKey.replace(/\\n/g, '\n'),
@@ -579,13 +952,14 @@ async function processAndStoreItems(items: any[], type: string, getTitle: (item:
 
       // We removed backend Gemini calls, so default to Neutral and no embedding
       let sentiment = 'Neutral';
+      const safeItem = sanitizeForFirestore(item);
 
       const docRef = firestore.collection('items').doc();
       await docRef.set({
         title,
         url,
         type,
-        originalData: item,
+        originalData: safeItem,
         sentiment,
         createdAt: FieldValue.serverTimestamp()
       });
@@ -602,7 +976,7 @@ async function processAndStoreItems(items: any[], type: string, getTitle: (item:
 // Reusable fetch helpers for each platform
 interface FetchResult<T> {
   items: T[];
-  error?: 'rate_limit' | 'quota_exceeded' | 'no_api_key' | 'network_error' | null;
+  error?: 'rate_limit' | 'quota_exceeded' | 'no_api_key' | 'network_error' | 'parse_error' | null;
 }
 
 async function fetchNewsForQuery(queryStr: string, category?: string): Promise<FetchResult<any>> {
@@ -622,12 +996,174 @@ async function fetchNewsForQuery(queryStr: string, category?: string): Promise<F
       return { items: [], error };
     }
     const data = await response.json();
-    console.log(`[News] query="${queryStr}" → ${(data.results || []).length} results`);
-    return { items: data.results || [] };
+    const normalized = (data.results || []).map((item: any) => ({
+      ...item,
+      _ingestionSource: 'newsdata',
+    }));
+    console.log(`[News] query="${queryStr}" → ${normalized.length} results`);
+    return { items: normalized };
   } catch (e) {
     console.error('[News] fetchNewsForQuery error:', e);
     return { items: [], error: 'network_error' };
   }
+}
+
+function stripHtml(text: string): string {
+  return text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function derivePublisherFromTitle(title?: string): string | null {
+  if (!title) return null;
+  const match = title.match(/(?:\s[-–—]\s)([^–—-]{2,80})\s*$/u);
+  const candidate = match?.[1]?.trim();
+  if (!candidate) return null;
+  if (/google news/i.test(candidate)) return null;
+  if (/site:/i.test(candidate)) return null;
+  if (candidate.length > 60) return null;
+  return candidate;
+}
+
+function cleanRssFeedTitle(feedTitle?: string): string {
+  if (!feedTitle) return '';
+  return feedTitle
+    .replace(/\s*-\s*Google News\s*$/i, '')
+    .replace(/^"(.+)"$/, '$1')
+    .trim();
+}
+
+function cleanGoogleNewsSuffix(text?: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\s*[-–—]\s*Google News\s*$/i, '')
+    .trim();
+}
+
+function sanitizeSourceLabel(source?: string, title?: string): string {
+  const cleaned = cleanGoogleNewsSuffix(cleanRssFeedTitle(source));
+  const looksLikeSearchFeed =
+    /google news/i.test(source || '') ||
+    /site:/i.test(cleaned) ||
+    /\bOR\b/i.test(cleaned) ||
+    /[()"]/g.test(cleaned);
+  const fromTitle = derivePublisherFromTitle(cleanGoogleNewsSuffix(title));
+  if (looksLikeSearchFeed) return fromTitle || 'News';
+  if (!cleaned) return fromTitle || 'News';
+  if (cleaned.length > 80) return fromTitle || 'News';
+  return cleaned;
+}
+
+function sanitizeNewsItemForResponse(item: any): any {
+  const cleanedTitle = cleanGoogleNewsSuffix(item?.title || '');
+  return {
+    ...item,
+    title: cleanedTitle || item?.title || '',
+    source_id: sanitizeSourceLabel(item?.source_id, cleanedTitle || item?.title),
+  };
+}
+
+function normalizeRssSourceId(item: any): any {
+  const rawSource = String(item?.source_id || '');
+  const shouldNormalize =
+    item?._ingestionSource === 'rss' ||
+    /google news/i.test(rawSource) ||
+    /site:/i.test(rawSource);
+  if (!shouldNormalize) return item;
+  const fromTitle = derivePublisherFromTitle(item.title);
+  const cleanedExisting = cleanRssFeedTitle(item.source_id);
+  const existingLooksLikeQuery = /site:|\(|\)|\bOR\b/i.test(cleanedExisting);
+  const safeExisting = existingLooksLikeQuery ? '' : cleanedExisting;
+  const sourceId = sanitizeSourceLabel(fromTitle || safeExisting || item.source_id, item.title);
+  return {
+    ...item,
+    title: cleanGoogleNewsSuffix(item.title || ''),
+    source_id: sourceId || 'News',
+  };
+}
+
+function dedupeNewsItems(items: any[]): any[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = (item.link || item.title || '').trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isRecentEnough(pubDate?: string): boolean {
+  if (!pubDate) return true;
+  const ts = Date.parse(pubDate);
+  if (Number.isNaN(ts)) return true;
+  return (Date.now() - ts) <= RSS_MAX_AGE_MS;
+}
+
+async function fetchRSSForInterest(topic: string): Promise<FetchResult<any> & { isCurated: boolean }> {
+  const { feeds, isCurated } = getRssFeedsForInterest(topic);
+  const selectedFeeds = feeds.slice(0, RSS_MAX_FEEDS_PER_INTEREST);
+  const perFeed = await Promise.all(selectedFeeds.map(async (feed) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    try {
+      const response = await fetch(feed.url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'PulseBoard/1.0 (RSS Aggregator)',
+          'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8',
+        },
+      });
+
+      if (!response.ok) {
+        return { items: [], error: 'network_error' as const };
+      }
+
+      const xml = await response.text();
+      const parsed = await rssParser.parseString(xml);
+
+      const normalized = (parsed.items || []).map((item: any) => {
+        const descriptionRaw = item.contentSnippet || item.content || item.summary || '';
+        const imageUrl = item.enclosure?.url || item['media:thumbnail']?.$?.url || item['media:content']?.$?.url || '';
+        const publisherFromTitle = derivePublisherFromTitle(item.title);
+        const cleanedFeedTitle = cleanRssFeedTitle(parsed.title);
+        const sourceId = publisherFromTitle || item.creator || cleanedFeedTitle || feed.name;
+        return {
+          title: item.title || '',
+          link: item.link || '',
+          description: stripHtml(descriptionRaw).slice(0, 400),
+          pubDate: item.isoDate || item.pubDate || '',
+          image_url: imageUrl,
+          source_id: sourceId,
+          creator: item.creator ? [item.creator] : [],
+          _ingestionSource: 'rss',
+        };
+      }).filter((item: any) => item.title && item.link && isRecentEnough(item.pubDate));
+
+      return { items: normalized };
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        return { items: [], error: 'network_error' as const };
+      }
+      console.warn(`[RSS] Failed for "${feed.name}" (${feed.url}):`, e);
+      return { items: [], error: 'parse_error' as const };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }));
+
+  const errors = new Set(perFeed.map(r => r.error).filter(Boolean));
+  const merged = dedupeNewsItems(
+    perFeed
+      .flatMap(r => r.items)
+      .sort((a: any, b: any) => (Date.parse(b.pubDate || '') || 0) - (Date.parse(a.pubDate || '') || 0))
+  ).slice(0, RSS_MAX_ITEMS_PER_INTEREST);
+  const normalizedMerged = merged.map(normalizeRssSourceId);
+
+  console.log(`[RSS] topic="${topic}" curated=${isCurated} feeds=${selectedFeeds.length} items=${normalizedMerged.length}`);
+
+  return {
+    items: normalizedMerged,
+    error: normalizedMerged.length === 0 ? (errors.has('network_error') ? 'network_error' : errors.has('parse_error') ? 'parse_error' : null) : null,
+    isCurated,
+  };
 }
 
 async function fetchYouTubeForQuery(queryStr: string, minSubscribers = 100000): Promise<FetchResult<any>> {
@@ -764,6 +1300,7 @@ function buildWarning(source: string, errors: Set<string | undefined>): string {
   if (reasons.includes('quota_exceeded')) return `${source}: Daily API quota exceeded — resets tomorrow`;
   if (reasons.includes('no_api_key')) return `${source}: Not configured`;
   if (reasons.includes('network_error')) return `${source}: Failed to connect`;
+  if (reasons.includes('parse_error')) return `${source}: Parsing failed`;
   return `${source}: No results found`;
 }
 
@@ -801,16 +1338,34 @@ async function fetchAndCacheSingleInterest(topic: string): Promise<{
     // Step 2: Fetch ALL queries per platform in parallel, merge and dedupe
     const [newsResults, ytResults, xResults] = await Promise.all([
       (async () => {
-        const allResults = await Promise.all(smartQueries.newsQueries.map(q => fetchNewsForQuery(q)));
-        const errors = new Set(allResults.map(r => r.error));
-        const merged = allResults.flatMap(r => r.items);
-        const seen = new Set<string>();
-        const deduped = merged.filter(item => {
-          const k = item.link || item.title;
-          if (!k || seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        });
+        const errors = new Set<string | undefined>();
+        const rssResult = await fetchRSSForInterest(topic);
+        const rssCount = rssResult.items.length;
+        let newsDataCount = 0;
+        let merged = [...rssResult.items];
+        if (rssResult.error) errors.add(rssResult.error);
+
+        const shouldFallbackToNewsData =
+          merged.length < RSS_MIN_RESULTS_BEFORE_NEWSDATA_FALLBACK || !rssResult.isCurated;
+
+        if (shouldFallbackToNewsData) {
+          const fallbackQueries = rssResult.isCurated
+            ? smartQueries.newsQueries.slice(0, 1)
+            : smartQueries.newsQueries;
+          const allNewsDataResults = await Promise.all(
+            fallbackQueries.map(q => fetchNewsForQuery(q))
+          );
+          allNewsDataResults.forEach(r => {
+            if (r.error) errors.add(r.error);
+          });
+          const newsDataItems = allNewsDataResults.flatMap(r => r.items);
+          newsDataCount = newsDataItems.length;
+          merged = [...merged, ...newsDataItems];
+          console.log(`[News Hybrid] topic="${topic}" rss=${rssResult.items.length} fallbackQueries=${fallbackQueries.length} total=${merged.length}`);
+        }
+
+        const deduped = dedupeNewsItems(merged);
+        logNewsIngestionMetrics(topic, rssCount, newsDataCount, deduped.length, shouldFallbackToNewsData, 'smart-feed');
         if (deduped.length === 0) warnings.push(buildWarning('News', errors));
         return deduped;
       })(),
@@ -850,15 +1405,24 @@ async function fetchAndCacheSingleInterest(topic: string): Promise<{
       filterByRelevance(xResults, topic, (item) => item.text),
     ]);
 
-    // Step 4: Store in Firestore + generate summary (in parallel)
+    // Step 4: Deterministic ranking + optional Gemini rerank (importance layer)
+    let rankedNews = attachBaseRank(filteredNews, 'news');
+    let rankedVideos = attachBaseRank(filteredVideos, 'video');
+    let rankedPosts = attachBaseRank(filteredPosts, 'trend');
+
+    rankedNews = await maybeApplyGeminiRerank(rankedNews, 'news', topic);
+    rankedVideos = await maybeApplyGeminiRerank(rankedVideos, 'video', topic);
+    rankedPosts = await maybeApplyGeminiRerank(rankedPosts, 'trend', topic);
+
+    // Step 5: Store in Firestore + generate summary (in parallel)
     const [processedNews, processedVideos, processedPosts, feedSummary] = await Promise.all([
-      processAndStoreItems(filteredNews, 'news', (item) => item.title, (item) => item.link),
-      processAndStoreItems(filteredVideos, 'video', (item) => item.snippet?.title, (item) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`),
-      processAndStoreItems(filteredPosts, 'trend', (item) => item.text, (item) => item.url),
-      generateFeedSummary(topic, filteredNews, filteredVideos, filteredPosts),
+      processAndStoreItems(rankedNews, 'news', (item) => item.title, (item) => item.link),
+      processAndStoreItems(rankedVideos, 'video', (item) => item.snippet?.title, (item) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`),
+      processAndStoreItems(rankedPosts, 'trend', (item) => item.text, (item) => item.url),
+      generateFeedSummary(topic, rankedNews, rankedVideos, rankedPosts),
     ]);
 
-    // Step 5: Write to Firestore feed cache
+    // Step 6: Write to Firestore feed cache
     await writeFeedCache(topic, {
       news: processedNews,
       videos: processedVideos,
@@ -895,7 +1459,11 @@ function refreshInterestsInBackground(interests: string[]): void {
 // Merge per-interest feed caches into a combined "For You" response
 function mergeInterestCaches(
   caches: { interest: string; data: FeedCacheDocument }[],
-  interests: string[]
+  interests: string[],
+  loadMultiplier = 1,
+  personalizationSignals: PersonalizationSignals | null = null,
+  debugKey?: string,
+  userId?: string
 ): any {
   const allNews: any[] = [];
   const allVideos: any[] = [];
@@ -904,7 +1472,7 @@ function mergeInterestCaches(
   const allWarnings: string[] = [];
 
   for (const { interest, data } of caches) {
-    allNews.push(...data.news.map((i: any) => ({ ...i, _interest: interest })));
+    allNews.push(...data.news.map((i: any) => ({ ...sanitizeNewsItemForResponse(i), _interest: interest })));
     allVideos.push(...data.videos.map((i: any) => ({ ...i, _interest: interest })));
     allPosts.push(...data.posts.map((i: any) => ({ ...i, _interest: interest })));
     if (data.summary) allSummaries.push(data.summary);
@@ -926,10 +1494,49 @@ function mergeInterestCaches(
   const dedupedVideos = dedupeByKey(allVideos, i => i.id?.videoId || i.id);
   const dedupedPosts = dedupeByKey(allPosts, i => i.id || i.text);
 
+  const rankedNews = applyPersonalizationRank(dedupedNews, 'news', personalizationSignals);
+  const rankedVideos = applyPersonalizationRank(dedupedVideos, 'video', personalizationSignals);
+  const rankedPosts = applyPersonalizationRank(dedupedPosts, 'trend', personalizationSignals);
+
   // Apply diversity enforcement
-  const diverseNews = ensureDiversity(dedupedNews, (i: any) => i._interest, 4, 15);
-  const diverseVideos = ensureDiversity(dedupedVideos, (i: any) => i._interest, 3, 10);
-  const diversePosts = ensureDiversity(dedupedPosts, (i: any) => i._interest, 3, 8);
+  const diverseNews = ensureDiversity(
+    rankedNews,
+    (i: any) => i._interest,
+    FORYOU_PER_INTEREST_NEWS_LIMIT * loadMultiplier,
+    FORYOU_BASE_NEWS_LIMIT * loadMultiplier
+  );
+  const diverseVideos = ensureDiversity(
+    rankedVideos,
+    (i: any) => i._interest,
+    FORYOU_PER_INTEREST_VIDEO_LIMIT * loadMultiplier,
+    FORYOU_BASE_VIDEO_LIMIT * loadMultiplier
+  );
+  const diversePosts = ensureDiversity(
+    rankedPosts,
+    (i: any) => i._interest,
+    FORYOU_PER_INTEREST_POST_LIMIT * loadMultiplier,
+    FORYOU_BASE_POST_LIMIT * loadMultiplier
+  );
+
+  const hasMore =
+    rankedNews.length > diverseNews.length ||
+    rankedVideos.length > diverseVideos.length ||
+    rankedPosts.length > diversePosts.length;
+
+  if (debugKey) {
+    captureRankingDebug({
+      key: debugKey,
+      generatedAt: new Date().toISOString(),
+      userId,
+      mode: 'foryou',
+      counts: { news: rankedNews.length, videos: rankedVideos.length, posts: rankedPosts.length },
+      top: {
+        news: rankedNews.slice(0, 8).map((i: any) => ({ title: i.title, link: i.link, interest: i._interest, rank: i._rank })),
+        videos: rankedVideos.slice(0, 8).map((i: any) => ({ title: i.snippet?.title, id: i.id?.videoId || i.id, interest: i._interest, rank: i._rank })),
+        posts: rankedPosts.slice(0, 8).map((i: any) => ({ text: String(i.text || '').slice(0, 140), id: i.id, interest: i._interest, rank: i._rank })),
+      },
+    });
+  }
 
   return {
     news: { results: diverseNews },
@@ -938,6 +1545,90 @@ function mergeInterestCaches(
     trendContext: allSummaries.join('\n\n'),
     warnings: [...new Set(allWarnings)],
     fromCache: true,
+    pagination: {
+      loadMultiplier,
+      maxLoadMultiplier: FEED_MAX_LOAD_MULTIPLIER,
+      hasMore,
+      available: {
+        news: rankedNews.length,
+        videos: rankedVideos.length,
+        posts: rankedPosts.length,
+      },
+      returned: {
+        news: diverseNews.length,
+        videos: diverseVideos.length,
+        posts: diversePosts.length,
+      },
+    },
+  };
+}
+
+function formatSingleInterestResponse(
+  topic: string,
+  data: { news: any[]; videos: any[]; posts: any[]; summary: string; warnings: string[] },
+  loadMultiplier: number,
+  fromCache: boolean,
+  stale = false,
+  personalizationSignals: PersonalizationSignals | null = null,
+  debugKey?: string,
+  userId?: string
+) {
+  const rankedNews = applyPersonalizationRank(
+    data.news.map((item: any) => sanitizeNewsItemForResponse(item)),
+    'news',
+    personalizationSignals
+  );
+  const rankedVideos = applyPersonalizationRank(data.videos, 'video', personalizationSignals);
+  const rankedPosts = applyPersonalizationRank(data.posts, 'trend', personalizationSignals);
+
+  const available = {
+    news: rankedNews.length,
+    videos: rankedVideos.length,
+    posts: rankedPosts.length,
+  };
+  const limitedNews = rankedNews.slice(0, SINGLE_BASE_NEWS_LIMIT * loadMultiplier);
+  const limitedVideos = rankedVideos.slice(0, SINGLE_BASE_VIDEO_LIMIT * loadMultiplier);
+  const limitedPosts = rankedPosts.slice(0, SINGLE_BASE_POST_LIMIT * loadMultiplier);
+  const hasMore =
+    available.news > limitedNews.length ||
+    available.videos > limitedVideos.length ||
+    available.posts > limitedPosts.length;
+
+  if (debugKey) {
+    captureRankingDebug({
+      key: debugKey,
+      generatedAt: new Date().toISOString(),
+      userId,
+      topic,
+      mode: 'single',
+      counts: { news: rankedNews.length, videos: rankedVideos.length, posts: rankedPosts.length },
+      top: {
+        news: rankedNews.slice(0, 8).map((i: any) => ({ title: i.title, link: i.link, rank: i._rank })),
+        videos: rankedVideos.slice(0, 8).map((i: any) => ({ title: i.snippet?.title, id: i.id?.videoId || i.id, rank: i._rank })),
+        posts: rankedPosts.slice(0, 8).map((i: any) => ({ text: String(i.text || '').slice(0, 140), id: i.id, rank: i._rank })),
+      },
+    });
+  }
+
+  return {
+    news: { results: limitedNews.map((i: any) => ({ ...i, _interest: topic })) },
+    videos: { items: limitedVideos.map((i: any) => ({ ...i, _interest: topic })) },
+    posts: { posts: limitedPosts.map((i: any) => ({ ...i, _interest: topic })) },
+    trendContext: data.summary,
+    warnings: data.warnings || [],
+    fromCache,
+    stale,
+    pagination: {
+      loadMultiplier,
+      maxLoadMultiplier: FEED_MAX_LOAD_MULTIPLIER,
+      hasMore,
+      available,
+      returned: {
+        news: limitedNews.length,
+        videos: limitedVideos.length,
+        posts: limitedPosts.length,
+      },
+    },
   };
 }
 
@@ -945,25 +1636,22 @@ function mergeInterestCaches(
 app.get("/api/news", async (req, res) => {
   try {
     const rawTopic = (req.query.q as string) || "technology";
-    const apiKey = process.env.NEWSDATA_API_KEY;
+    const rssResult = await fetchRSSForInterest(rawTopic);
+    const rssCount = rssResult.items.length;
+    let newsDataCount = 0;
+    let results = [...rssResult.items];
 
-    if (!apiKey) return res.status(500).json({ error: "NEWSDATA_API_KEY is not configured" });
-
-    const config = getTopicConfig(rawTopic);
-    let url = `https://newsdata.io/api/1/news?apikey=${apiKey}&q=${encodeURIComponent(config.query)}&language=en`;
-    if (config.category) {
-      url += `&category=${config.category}`;
+    const usedFallback = results.length < RSS_MIN_RESULTS_BEFORE_NEWSDATA_FALLBACK || !rssResult.isCurated;
+    if (usedFallback) {
+      const config = getTopicConfig(rawTopic);
+      const fallback = await fetchNewsForQuery(config.query, config.category);
+      newsDataCount = fallback.items.length;
+      results = dedupeNewsItems([...results, ...fallback.items]);
     }
-
-    const response = await fetch(url);
-
-    if (!response.ok) throw new Error(`NewsData API error: ${response.statusText}`);
-
-    const data = await response.json();
-    let results = data.results || [];
 
     // Gemini relevance filtering
     results = await filterByRelevance(results, rawTopic, (item) => item.title);
+    logNewsIngestionMetrics(rawTopic, rssCount, newsDataCount, results.length, usedFallback, 'news-endpoint');
 
     const processed = await processAndStoreItems(
       results,
@@ -972,7 +1660,7 @@ app.get("/api/news", async (req, res) => {
       (item) => item.link
     );
 
-    res.json({ results: processed });
+    res.json({ results: processed.map((item: any) => sanitizeNewsItemForResponse(item)) });
   } catch (error) {
     console.error("Error fetching news:", error);
     res.status(500).json({ error: "Failed to fetch news" });
@@ -1156,20 +1844,26 @@ app.get("/api/smart-feed", async (req, res) => {
   try {
     const topic = (req.query.q as string) || "technology";
     const forceRefresh = req.query.refresh === 'true';
+    const loadMultiplier = parseLoadMultiplier(req.query.loadMultiplier);
+    const userId = (req.query.userId as string) || '';
+    const debugKey = (req.query.debugKey as string) || '';
+    const personalizationSignals = await getPersonalizationSignals(userId || null);
 
     // 1. If not forcing refresh, check cache first
     if (!forceRefresh) {
       const cached = await readFeedCache(topic);
       if (cached) {
         console.log(`[smart-feed] Cache hit for "${topic}"`);
-        return res.json({
-          news: { results: cached.news.map((i: any) => ({ ...i, _interest: topic })) },
-          videos: { items: cached.videos.map((i: any) => ({ ...i, _interest: topic })) },
-          posts: { posts: cached.posts.map((i: any) => ({ ...i, _interest: topic })) },
-          trendContext: cached.summary,
-          warnings: cached.warnings || [],
-          fromCache: true,
-        });
+        return res.json(formatSingleInterestResponse(
+          topic,
+          { news: cached.news, videos: cached.videos, posts: cached.posts, summary: cached.summary, warnings: cached.warnings || [] },
+          loadMultiplier,
+          true,
+          false,
+          personalizationSignals,
+          debugKey || undefined,
+          userId || undefined
+        ));
       }
 
       // 2. Stale-while-revalidate: return stale data, refresh in background
@@ -1179,15 +1873,22 @@ app.get("/api/smart-feed", async (req, res) => {
         fetchAndCacheSingleInterest(topic).catch(e =>
           console.error(`[smart-feed] Background refresh failed for "${topic}":`, e)
         );
-        return res.json({
-          news: { results: stale.news.map((i: any) => ({ ...i, _interest: topic })) },
-          videos: { items: stale.videos.map((i: any) => ({ ...i, _interest: topic })) },
-          posts: { posts: stale.posts.map((i: any) => ({ ...i, _interest: topic })) },
-          trendContext: stale.summary,
-          warnings: [...(stale.warnings || []), 'Content may be slightly outdated, refreshing...'],
-          fromCache: true,
-          stale: true,
-        });
+        return res.json(formatSingleInterestResponse(
+          topic,
+          {
+            news: stale.news,
+            videos: stale.videos,
+            posts: stale.posts,
+            summary: stale.summary,
+            warnings: [...(stale.warnings || []), 'Content may be slightly outdated, refreshing...'],
+          },
+          loadMultiplier,
+          true,
+          true,
+          personalizationSignals,
+          debugKey || undefined,
+          userId || undefined
+        ));
       }
     }
 
@@ -1195,14 +1896,7 @@ app.get("/api/smart-feed", async (req, res) => {
     console.log(`[smart-feed] ${forceRefresh ? 'Forced refresh' : 'Cache miss'} for "${topic}", fetching live`);
     const result = await fetchAndCacheSingleInterest(topic);
 
-    res.json({
-      news: { results: result.news.map((i: any) => ({ ...i, _interest: topic })) },
-      videos: { items: result.videos.map((i: any) => ({ ...i, _interest: topic })) },
-      posts: { posts: result.posts.map((i: any) => ({ ...i, _interest: topic })) },
-      trendContext: result.summary,
-      warnings: result.warnings,
-      fromCache: false,
-    });
+    res.json(formatSingleInterestResponse(topic, result, loadMultiplier, false, false, personalizationSignals, debugKey || undefined, userId || undefined));
   } catch (error) {
     console.error("Error in smart-feed:", error);
     res.status(500).json({ error: "Failed to fetch smart feed" });
@@ -1217,6 +1911,10 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
       return res.status(400).json({ error: 'No interests provided' });
     }
     const forceRefresh = req.query.refresh === 'true';
+    const loadMultiplier = parseLoadMultiplier(req.query.loadMultiplier);
+    const userId = (req.query.userId as string) || '';
+    const debugKey = (req.query.debugKey as string) || '';
+    const personalizationSignals = await getPersonalizationSignals(userId || null);
 
     // 1. If not forcing refresh, try to serve from per-interest caches
     if (!forceRefresh) {
@@ -1232,7 +1930,11 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
         console.log(`[smart-feed-foryou] Full cache hit for [${interests.join(', ')}]`);
         return res.json(mergeInterestCaches(
           cacheResults.map(r => ({ interest: r.interest, data: r.cache! })),
-          interests
+          interests,
+          loadMultiplier,
+          personalizationSignals,
+          debugKey || undefined,
+          userId || undefined
         ));
       }
 
@@ -1252,7 +1954,11 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
         refreshInterestsInBackground(staleInterests);
         return res.json(mergeInterestCaches(
           staleResults.map(r => ({ interest: r.interest, data: (r.cache || r.staleCache)! })),
-          interests
+          interests,
+          loadMultiplier,
+          personalizationSignals,
+          debugKey || undefined,
+          userId || undefined
         ));
       }
     }
@@ -1272,7 +1978,7 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
     );
 
     res.json({
-      ...mergeInterestCaches(liveResults, interests),
+      ...mergeInterestCaches(liveResults, interests, loadMultiplier, personalizationSignals, debugKey || undefined, userId || undefined),
       fromCache: false,
     });
   } catch (error) {
@@ -1402,6 +2108,66 @@ app.post("/api/refresh-feeds", async (req, res) => {
   }
 });
 
+app.get("/api/news-metrics", async (_req, res) => {
+  try {
+    const interests = [...newsIngestionMetrics.entries()].map(([interestKey, stats]) => {
+      const runs = Math.max(stats.runs, 1);
+      return {
+        interestKey,
+        ...stats,
+        avgRssPerRun: Number((stats.rssItems / runs).toFixed(2)),
+        avgNewsDataPerRun: Number((stats.newsDataItems / runs).toFixed(2)),
+        avgFinalPerRun: Number((stats.finalItems / runs).toFixed(2)),
+        fallbackRate: Number((stats.fallbackRuns / runs).toFixed(3)),
+      };
+    }).sort((a, b) => b.runs - a.runs);
+
+    const totals = interests.reduce((acc, item) => {
+      acc.runs += item.runs;
+      acc.rssItems += item.rssItems;
+      acc.newsDataItems += item.newsDataItems;
+      acc.finalItems += item.finalItems;
+      acc.fallbackRuns += item.fallbackRuns;
+      return acc;
+    }, { runs: 0, rssItems: 0, newsDataItems: 0, finalItems: 0, fallbackRuns: 0 });
+
+    const totalRuns = Math.max(totals.runs, 1);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      totals: {
+        ...totals,
+        avgRssPerRun: Number((totals.rssItems / totalRuns).toFixed(2)),
+        avgNewsDataPerRun: Number((totals.newsDataItems / totalRuns).toFixed(2)),
+        avgFinalPerRun: Number((totals.finalItems / totalRuns).toFixed(2)),
+        fallbackRate: Number((totals.fallbackRuns / totalRuns).toFixed(3)),
+      },
+      interests,
+    });
+  } catch (error) {
+    console.error("Error in news-metrics:", error);
+    res.status(500).json({ error: "Failed to fetch news metrics" });
+  }
+});
+
+app.get("/api/ranking-debug", async (req, res) => {
+  try {
+    const key = (req.query.key as string) || '';
+    if (key) {
+      const entry = rankingDebugMap.get(key);
+      if (!entry) return res.status(404).json({ error: 'No ranking debug data for this key' });
+      return res.json(entry);
+    }
+    return res.json({
+      generatedAt: new Date().toISOString(),
+      keys: [...rankingDebugMap.keys()].slice(-30),
+      count: rankingDebugMap.size,
+    });
+  } catch (error) {
+    console.error("Error in ranking-debug:", error);
+    res.status(500).json({ error: "Failed to fetch ranking debug data" });
+  }
+});
+
 // Background refresh: collect all unique interests from users and refresh caches
 async function runBackgroundRefresh() {
   if (!firestore) {
@@ -1453,9 +2219,9 @@ async function startServer() {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 
-  // Run initial cache warming after 10s startup delay, then every 12 hours
+  // Run initial cache warming after 10s startup delay, then every 3 hours
   setTimeout(() => runBackgroundRefresh(), 10_000);
-  setInterval(() => runBackgroundRefresh(), 12 * 60 * 60 * 1000);
+  setInterval(() => runBackgroundRefresh(), 3 * 60 * 60 * 1000);
 }
 
 startServer();

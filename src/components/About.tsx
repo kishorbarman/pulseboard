@@ -24,8 +24,8 @@ export function About({ onBack }: AboutProps) {
 
       {/* Hero */}
       <div className="flex items-center gap-4 mb-8">
-        <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
-          <Compass className="w-7 h-7 text-indigo-400" />
+        <div className="w-14 h-14 rounded-2xl bg-[var(--th-accent-soft)] border border-[var(--th-accent-border)] flex items-center justify-center shrink-0">
+          <Compass className="w-7 h-7 text-[var(--th-accent-text)]" />
         </div>
         <div>
           <h1 className="text-3xl font-bold text-text-heading">PulseBoard</h1>
@@ -85,7 +85,7 @@ export function About({ onBack }: AboutProps) {
 function FeatureCard({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
   return (
     <div className="bg-surface-primary/40 backdrop-blur-xl border border-border-secondary rounded-2xl p-5 flex gap-4">
-      <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+      <div className="w-10 h-10 rounded-xl bg-[var(--th-accent-soft)] border border-[var(--th-accent-border)] flex items-center justify-center text-[var(--th-accent-text)] shrink-0">
         {icon}
       </div>
       <div>
@@ -99,7 +99,7 @@ function FeatureCard({ icon, title, description }: { icon: React.ReactNode; titl
 function Step({ number, text }: { number: number; text: string }) {
   return (
     <div className="flex gap-3 items-start">
-      <div className="w-6 h-6 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0 mt-0.5">
+      <div className="w-6 h-6 rounded-full bg-[var(--th-accent-soft)] border border-[var(--th-accent-border)] flex items-center justify-center text-xs font-bold text-[var(--th-accent-text)] shrink-0 mt-0.5">
         {number}
       </div>
       <p className="text-sm text-text-secondary leading-relaxed">{text}</p>

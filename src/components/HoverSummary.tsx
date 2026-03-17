@@ -156,12 +156,16 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
           className="overflow-hidden"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
         >
-          <div ref={containerRef} className="px-4 md:px-6 pb-4 pt-4 border-t border-indigo-500/20 bg-indigo-500/5">
+          <div
+            ref={containerRef}
+            className="px-4 md:px-6 pb-4 pt-4 border-t border-[var(--th-accent-border)]"
+            style={{ backgroundColor: 'var(--th-accent-soft)' }}
+          >
             {/* Header */}
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">AI Summary</span>
+                <Sparkles className="w-3.5 h-3.5 text-[var(--th-accent-text)]" />
+                <span className="text-xs font-bold text-[var(--th-accent-text)] uppercase tracking-wider">AI Summary</span>
               </div>
               <button
                 onClick={handleClose}
@@ -182,7 +186,7 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
                 messages.map((msg, i) => (
                   <div key={i} className={msg.role === 'user' ? 'flex justify-end' : ''}>
                     {msg.role === 'user' ? (
-                      <div className="bg-indigo-500/20 text-text-primary border border-indigo-500/30 rounded-lg rounded-br-sm px-2.5 py-1.5 text-sm max-w-[85%]">
+                      <div className="bg-[var(--th-accent-soft)] text-text-primary border border-[var(--th-accent-border)] rounded-lg rounded-br-sm px-2.5 py-1.5 text-sm max-w-[85%]">
                         {msg.text}
                       </div>
                     ) : (
@@ -210,13 +214,13 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
                   onKeyDown={handleKeyDown}
                   placeholder="Ask a follow-up..."
                   disabled={responding}
-                  className="flex-1 bg-surface-secondary/50 border border-border-primary rounded-lg px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-indigo-500/50 disabled:opacity-50"
+                  className="flex-1 bg-surface-secondary/50 border border-border-primary rounded-lg px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-[var(--th-focus-ring)] disabled:opacity-50"
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                 />
                 <button
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); sendFollowUp(); }}
                   disabled={!followUp.trim() || responding}
-                  className="p-1.5 rounded-lg bg-indigo-500 text-white disabled:opacity-30 hover:bg-indigo-600 transition-colors shrink-0"
+                  className="p-1.5 rounded-lg bg-[var(--th-accent)] text-white disabled:opacity-30 hover:bg-[var(--th-accent-strong)] transition-colors shrink-0"
                 >
                   <ArrowUp className="w-3 h-3" />
                 </button>

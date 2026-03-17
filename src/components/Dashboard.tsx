@@ -68,6 +68,8 @@ function dedupeItems<T>(items: T[], getTitle: (item: T) => string, getUrl: (item
 export function Dashboard({ user, userData }: DashboardProps) {
   const [activeInterest, setActiveInterest] = useState<string>('For You');
   const [searchQuery, setSearchQuery] = useState('');
+  const [loadMultiplier, setLoadMultiplier] = useState(1);
+  const [hasMoreContent, setHasMoreContent] = useState(false);
   const [news, setNews] = useState<any[]>([]);
   const [videos, setVideos] = useState<any[]>([]);
   const [trends, setTrends] = useState<any[]>([]);
@@ -91,6 +93,13 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
 
   const interests = userData?.interests || ['Technology', 'AI', 'Global News'];
+  const maxLoadMultiplier = 4;
+
+  const changeInterest = (interest: string) => {
+    setActiveInterest(interest);
+    setLoadMultiplier(1);
+    setHasMoreContent(false);
+  };
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -103,7 +112,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   }, [activeInterest]);
 
   const fetchData = useCallback(async (forceRefresh = false) => {
-    if (forceRefresh) {
+    if (forceRefresh || loadMultiplier > 1) {
       setRefreshing(true);
     } else {
       setLoading(true);
@@ -123,25 +132,29 @@ export function Dashboard({ user, userData }: DashboardProps) {
         posts: data.posts?.posts || [],
         trendContext: data.trendContext || '',
         warnings: data.warnings || [],
+        pagination: data.pagination || null,
       });
 
       const refreshParam = forceRefresh ? '&refresh=true' : '';
+      const loadParam = `&loadMultiplier=${loadMultiplier}`;
 
       if (activeInterest === 'Saved') {
         fetchedNews = bookmarks.filter(b => b.type === 'news').map(b => b.item);
         fetchedVideos = bookmarks.filter(b => b.type === 'video').map(b => b.item);
         fetchedTrends = bookmarks.filter(b => b.type === 'trend').map(b => b.item);
+        setHasMoreContent(false);
       } else if (activeInterest === 'For You') {
         // Fetch personalized feed + smart content covering all interests
         const [personalizedRes, smartRes] = await Promise.all([
           fetch(`/api/personalized-feed?userId=${user.uid}`),
-          fetch(`/api/smart-feed-foryou?interests=${encodeURIComponent(interests.join(','))}${refreshParam}`),
+          fetch(`/api/smart-feed-foryou?interests=${encodeURIComponent(interests.join(','))}&userId=${encodeURIComponent(user.uid)}${refreshParam}${loadParam}`),
         ]);
 
         const personalizedData = await personalizedRes.json();
         const pItems = personalizedData.items || [];
         const smartData = await smartRes.json().catch(() => ({}));
         const smart = parseSmartFeed(smartData);
+        setHasMoreContent(Boolean(smart.pagination?.hasMore) && loadMultiplier < (smart.pagination?.maxLoadMultiplier || maxLoadMultiplier));
 
         if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
         setTrendContext(smart.trendContext);
@@ -170,7 +183,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
 
       } else {
         // Smart feed for specific interest or search query
-        const smartRes = await fetch(`/api/smart-feed?q=${encodeURIComponent(activeInterest)}${refreshParam}`);
+        const smartRes = await fetch(`/api/smart-feed?q=${encodeURIComponent(activeInterest)}&userId=${encodeURIComponent(user.uid)}${refreshParam}${loadParam}`);
         const smartData = await smartRes.json().catch(() => ({}));
 
         if (smartData.error) {
@@ -178,6 +191,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
         }
 
         const smart = parseSmartFeed(smartData);
+        setHasMoreContent(Boolean(smart.pagination?.hasMore) && loadMultiplier < (smart.pagination?.maxLoadMultiplier || maxLoadMultiplier));
         if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
         setTrendContext(smart.trendContext);
 
@@ -208,11 +222,12 @@ export function Dashboard({ user, userData }: DashboardProps) {
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'An error occurred while fetching data.');
+      setHasMoreContent(false);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeInterest, interests, user.uid, bookmarks.length]);
+  }, [activeInterest, interests, user.uid, bookmarks.length, loadMultiplier]);
 
   useEffect(() => {
     fetchData(false);
@@ -253,7 +268,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      setActiveInterest(searchQuery.trim());
+      changeInterest(searchQuery.trim());
       setSearchQuery('');
     }
   };
@@ -263,21 +278,13 @@ export function Dashboard({ user, userData }: DashboardProps) {
     return bookmarks.some(b => b.url === url);
   };
 
-  const handleBookmark = async (e: React.MouseEvent, item: any, type: string) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleBookmark = async (item: any, type: string) => {
     await toggleBookmark(user.uid, item, type);
   };
 
   // Determine gradient colors based on active interest
   const getGradientColors = () => {
-    const lower = activeInterest.toLowerCase();
-    if (lower.includes('tech') || lower.includes('ai') || lower.includes('code')) return { c1: '#0ea5e9', c2: '#3b82f6' }; // Sky/Blue
-    if (lower.includes('space') || lower.includes('science')) return { c1: '#8b5cf6', c2: '#d946ef' }; // Violet/Fuchsia
-    if (lower.includes('health') || lower.includes('fitness')) return { c1: '#10b981', c2: '#14b8a6' }; // Emerald/Teal
-    if (lower.includes('finance') || lower.includes('crypto')) return { c1: '#f59e0b', c2: '#eab308' }; // Amber/Yellow
-    if (lower.includes('saved')) return { c1: '#f43f5e', c2: '#ec4899' }; // Rose/Pink
-    return { c1: '#4f46e5', c2: '#7c3aed' }; // Default Indigo/Violet
+    return { c1: '#0e7490', c2: '#1f2937' };
   };
 
   const colors = getGradientColors();
@@ -306,7 +313,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
       <Sidebar 
         interests={interests} 
         activeInterest={activeInterest} 
-        setActiveInterest={setActiveInterest} 
+        setActiveInterest={changeInterest} 
         user={user} 
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
@@ -315,7 +322,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
         <main className="flex-1 overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full mobile-hide-scrollbar">
           {activeInterest === 'About' ? (
-            <About onBack={() => setActiveInterest('For You')} />
+            <About onBack={() => changeInterest('For You')} />
           ) : (
             <>
               <header className="mb-4 md:mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 md:gap-6">
@@ -351,14 +358,14 @@ export function Dashboard({ user, userData }: DashboardProps) {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search topics..."
-                      className="w-full bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 pl-12 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all shadow-lg"
+                      className="w-full bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 pl-12 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-[var(--th-focus-ring)] transition-all shadow-lg"
                     />
                   </form>
                   {activeInterest !== 'Saved' && (
                     <button
                       onClick={() => fetchData(true)}
                       disabled={loading || refreshing}
-                      className="p-2.5 rounded-full bg-surface-primary/60 backdrop-blur-md border border-border-primary text-text-secondary hover:text-text-heading hover:border-indigo-500/50 transition-all disabled:opacity-40 shrink-0"
+                      className="p-2.5 rounded-full bg-surface-primary/60 backdrop-blur-md border border-border-primary text-text-secondary hover:text-text-heading hover:border-[var(--th-accent-border)] transition-all disabled:opacity-40 shrink-0"
                       title="Refresh feed"
                     >
                       <RefreshCw className={cn("w-5 h-5", refreshing && "animate-spin")} />
@@ -368,12 +375,13 @@ export function Dashboard({ user, userData }: DashboardProps) {
               </header>
 
               {sourceWarnings.length > 0 && (
-                <div className="mb-6 bg-orange-100/15 border border-orange-400/30 rounded-2xl px-5 py-3 flex items-start gap-3 text-orange-950 backdrop-blur-md">
+                <div className="mb-6 rounded-2xl px-5 py-3 flex items-start gap-3 text-[var(--th-warning-text)] backdrop-blur-md border"
+                     style={{ backgroundColor: 'var(--th-warning-bg)', borderColor: 'var(--th-warning-border)' }}>
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <div className="flex-1 text-sm">
                     {sourceWarnings.join(' · ')}
                   </div>
-                  <button onClick={() => setSourceWarnings([])} className="shrink-0 hover:text-orange-800 transition-colors">
+                  <button onClick={() => setSourceWarnings([])} className="shrink-0 hover:text-text-heading transition-colors">
                     <X className="w-4 h-4" />
                   </button>
                 </div>
@@ -385,10 +393,12 @@ export function Dashboard({ user, userData }: DashboardProps) {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="mb-4 h-1 bg-indigo-500/20 rounded-full overflow-hidden"
+                    className="mb-4 h-1 rounded-full overflow-hidden"
+                    style={{ backgroundColor: 'var(--th-accent-soft)' }}
                   >
                     <motion.div
-                      className="h-full bg-indigo-500 rounded-full w-1/3"
+                      className="h-full rounded-full w-1/3"
+                      style={{ backgroundColor: 'var(--th-accent)' }}
                       animate={{ x: ['-100%', '300%'] }}
                       transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut' }}
                     />
@@ -399,7 +409,8 @@ export function Dashboard({ user, userData }: DashboardProps) {
               {loading && !refreshing ? (
                 <SkeletonLoader />
               ) : error ? (
-                <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-6 flex items-center gap-4 text-red-400 backdrop-blur-md">
+                <div className="rounded-2xl p-6 flex items-center gap-4 backdrop-blur-md border"
+                     style={{ backgroundColor: 'var(--th-danger-bg)', borderColor: 'var(--th-danger-border)', color: 'var(--th-danger-text)' }}>
                   <AlertCircle className="w-6 h-6 shrink-0" />
                   <p>{error}</p>
                 </div>
@@ -408,45 +419,58 @@ export function Dashboard({ user, userData }: DashboardProps) {
                   <p className="text-lg">No content found for this topic.</p>
                 </div>
               ) : (
-                <motion.div
-                  variants={containerVariants}
-                  initial="hidden"
-                  animate="show"
-                  className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6"
-                >
-                  {mixedItems.map((item, idx) => (
-                    <motion.div key={`${item.type}-${idx}`} variants={itemVariants} className="h-full">
-                      {item.type === 'news' && (
-                        <NewsCard
-                          article={item.data}
-                          onClick={() => handleItemClick(item.data, 'news')}
-                          isBookmarked={isBookmarked(item.data, 'news')}
-                          onBookmark={(e) => handleBookmark(e, item.data, 'news')}
-                          className="h-full"
-                        />
-                      )}
-                      {item.type === 'video' && (
-                        <VideoCard
-                          video={item.data}
-                          onClick={(e) => openVideoModal(item.data, e)}
-                          isBookmarked={isBookmarked(item.data, 'video')}
-                          onBookmark={(e) => handleBookmark(e, item.data, 'video')}
-                          className="h-full"
-                        />
-                      )}
-                      {item.type === 'trend' && (
-                        <TrendCard
-                          trend={item.data}
-                          index={item.index!}
-                          onClick={() => handleItemClick(item.data, 'trend')}
-                          isBookmarked={isBookmarked(item.data, 'trend')}
-                          onBookmark={(e) => handleBookmark(e, item.data, 'trend')}
-                          className="h-full"
-                        />
-                      )}
-                    </motion.div>
-                  ))}
-                </motion.div>
+                <>
+                  <motion.div
+                    variants={containerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6"
+                  >
+                    {mixedItems.map((item, idx) => (
+                      <motion.div key={`${item.type}-${idx}`} variants={itemVariants} className="h-full">
+                        {item.type === 'news' && (
+                          <NewsCard
+                            article={item.data}
+                            onClick={() => handleItemClick(item.data, 'news')}
+                            isBookmarked={isBookmarked(item.data, 'news')}
+                            onBookmark={() => handleBookmark(item.data, 'news')}
+                            className="h-full"
+                          />
+                        )}
+                        {item.type === 'video' && (
+                          <VideoCard
+                            video={item.data}
+                            onClick={(e) => openVideoModal(item.data, e)}
+                            isBookmarked={isBookmarked(item.data, 'video')}
+                            onBookmark={() => handleBookmark(item.data, 'video')}
+                            className="h-full"
+                          />
+                        )}
+                        {item.type === 'trend' && (
+                          <TrendCard
+                            trend={item.data}
+                            index={item.index!}
+                            onClick={() => handleItemClick(item.data, 'trend')}
+                            isBookmarked={isBookmarked(item.data, 'trend')}
+                            onBookmark={() => handleBookmark(item.data, 'trend')}
+                            className="h-full"
+                          />
+                        )}
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                  {activeInterest !== 'Saved' && hasMoreContent && loadMultiplier < maxLoadMultiplier && (
+                    <div className="mt-6 flex justify-center">
+                      <button
+                        onClick={() => setLoadMultiplier((v) => Math.min(maxLoadMultiplier, v + 1))}
+                        disabled={refreshing}
+                        className="px-5 py-2.5 rounded-full bg-surface-primary/70 border border-border-primary text-text-primary hover:text-text-heading hover:border-[var(--th-accent-border)] transition-colors disabled:opacity-50"
+                      >
+                        {refreshing ? 'Loading...' : 'Fetch More Content'}
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}

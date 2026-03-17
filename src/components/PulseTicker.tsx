@@ -32,12 +32,12 @@ export function PulseTicker({ trends, videos }: PulseTickerProps) {
             href={item.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 px-6 text-sm font-medium text-text-tertiary hover:text-indigo-400 transition-colors"
+            className="flex items-center gap-2 px-6 text-sm font-medium text-text-tertiary hover:text-[var(--th-accent-text)] transition-colors"
           >
             {item.type === 'trend' ? (
-              <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
+              <TrendingUp className="w-3.5 h-3.5 text-[var(--th-accent)]" />
             ) : (
-              <Play className="w-3.5 h-3.5 text-red-500" />
+              <Play className="w-3.5 h-3.5 text-[var(--th-accent)]" />
             )}
             <span className="truncate max-w-[300px]">{item.text}</span>
             <span className="mx-4 text-text-muted">&bull;</span>

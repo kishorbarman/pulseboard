@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { ExternalLink, Clock, Bookmark, User, Sparkles } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { ExternalLink, Clock, User, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn, formatCompactTimeAgo } from '../lib/utils';
 import { HoverSummary } from './HoverSummary';
+import { SourceMenu } from './SourceMenu';
 
 interface NewsCardProps {
   key?: React.Key;
@@ -11,17 +11,27 @@ interface NewsCardProps {
   onClick: () => void;
   className?: string;
   isBookmarked?: boolean;
-  onBookmark?: (e: React.MouseEvent) => void;
+  onBookmark?: () => void;
 }
 
 export function NewsCard({ article, onClick, className = '', isBookmarked, onBookmark }: NewsCardProps) {
   const bgImage = article.image_url || `https://picsum.photos/seed/${encodeURIComponent(article.title)}/800/600?blur=2`;
   const [showSummary, setShowSummary] = useState(false);
+  const sourceType = article._ingestionSource === 'rss' ? 'RSS' : article._ingestionSource === 'newsdata' ? 'NewsData' : 'News';
+  const displaySource = (() => {
+    const raw = String(article.source_id || '').replace(/\s*[-–—]\s*Google News\s*$/i, '').trim();
+    const looksLikeSearchFeed = /site:|\(|\)|\bOR\b|google news/i.test(raw);
+    if (!looksLikeSearchFeed && raw && raw.length <= 80) return raw;
+    const title = String(article.title || '');
+    const match = title.match(/(?:\s[-–—]\s)([^–—-]{2,80})\s*$/u);
+    return (match?.[1] || 'News').trim();
+  })();
 
   const sentiment = article.sentiment || 'Neutral';
+  const ageLabel = formatCompactTimeAgo(article.pubDate);
   const sentimentClass =
-    sentiment === 'Positive' ? 'border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
-    sentiment === 'Negative' ? 'border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.1)]' :
+    sentiment === 'Positive' ? 'shadow-[0_0_15px_rgba(16,185,129,0.1)] border-[var(--th-success-border)]' :
+    sentiment === 'Negative' ? 'shadow-[0_0_15px_rgba(239,68,68,0.12)] border-[var(--th-danger-border)]' :
     'border-border-secondary';
 
   return (
@@ -34,6 +44,13 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
       whileTap={{ scale: 0.97 }}
       className={`group relative overflow-hidden rounded-2xl md:rounded-3xl border bg-surface-primary flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
     >
+      <SourceMenu
+        source={sourceType}
+        className="top-4 right-4"
+        isBookmarked={Boolean(isBookmarked)}
+        onToggleBookmark={onBookmark}
+      />
+
       <div className="relative h-48 shrink-0 overflow-hidden">
         <img
           src={bgImage}
@@ -45,26 +62,12 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
           }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[var(--th-surface-primary)] via-[var(--th-surface-primary)]/40 to-transparent" />
-
-        {onBookmark && (
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onBookmark(e);
-            }}
-            className="absolute top-4 right-4 z-10 p-2.5 bg-[var(--th-surface-overlay)] hover:bg-[var(--th-surface-overlay-heavy)] rounded-full backdrop-blur-md transition-all border border-border-primary"
-          >
-            <Bookmark className={cn("w-4 h-4", isBookmarked ? "fill-indigo-400 text-indigo-400" : "text-text-heading")} />
-          </motion.button>
-        )}
       </div>
 
       <div className="p-4 md:p-6 flex flex-col flex-1 bg-surface-primary/90 backdrop-blur-xl relative z-20 -mt-12 rounded-t-2xl md:rounded-t-3xl border-t border-border-secondary">
-        <div className="flex items-center gap-3 text-xs text-text-tertiary mb-3">
-          <span className="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-1 rounded-full font-medium">
-            {article.source_id || 'News'}
+        <div className="flex items-center gap-3 text-xs text-text-tertiary mb-3 pr-14">
+          <span className="px-2.5 py-1 rounded-full font-medium border text-[var(--th-accent-text)] bg-[var(--th-accent-soft)] border-[var(--th-accent-border)]">
+            {displaySource}
           </span>
           {article.creator && article.creator[0] && (
             <span className="flex items-center gap-1.5">
@@ -72,15 +75,9 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
               <span className="truncate max-w-[120px]">{article.creator[0]}</span>
             </span>
           )}
-          {article.pubDate && (
-            <span className="flex items-center gap-1.5 ml-auto">
-              <Clock className="w-3.5 h-3.5" />
-              {formatDistanceToNow(new Date(article.pubDate), { addSuffix: true })}
-            </span>
-          )}
         </div>
 
-        <h3 className="text-xl font-bold text-text-primary leading-snug mb-3 group-hover:text-indigo-300 transition-colors line-clamp-2">
+        <h3 className="text-xl font-bold text-text-primary leading-snug mb-3 group-hover:text-[var(--th-accent-text)] transition-colors line-clamp-2">
           {article.title}
         </h3>
 
@@ -91,12 +88,20 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
         )}
 
         <div className="mt-auto flex items-center justify-between pt-4 border-t border-border-secondary">
-          <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400 group-hover:text-indigo-300 transition-colors flex items-center gap-1">
-            Read Article <ExternalLink className="w-3 h-3" />
-          </span>
+          <div className="flex items-center gap-3">
+            {ageLabel && (
+              <span className="text-xs text-text-muted flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                {ageLabel}
+              </span>
+            )}
+            <span className="text-xs font-semibold uppercase tracking-wider text-[var(--th-accent-text)] transition-colors flex items-center gap-1">
+              Read Article <ExternalLink className="w-3 h-3" />
+            </span>
+          </div>
           <div className="flex items-center gap-2">
             {article._interest && (
-              <span className="text-[11px] font-medium text-indigo-400/70 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+              <span className="text-[11px] font-medium text-[var(--th-accent-text)]/80 bg-[var(--th-accent-soft)] px-2 py-0.5 rounded-full">
                 #{article._interest}
               </span>
             )}
@@ -105,8 +110,8 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
               className={cn(
                 "flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition-all",
                 showSummary
-                  ? "bg-indigo-500 border-indigo-500 text-white"
-                  : "bg-indigo-500/10 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/20 hover:border-indigo-500/40"
+                  ? "bg-[var(--th-accent)] border-[var(--th-accent)] text-white"
+                  : "bg-[var(--th-accent-soft)] border-[var(--th-accent-border)] text-[var(--th-accent-text)] hover:bg-[var(--th-accent-soft-strong)]"
               )}
             >
               <Sparkles className="w-3 h-3" />
@@ -114,7 +119,9 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
             {sentiment !== 'Neutral' && (
               <span className={cn(
                 "text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full border",
-                sentiment === 'Positive' ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : "text-rose-400 border-rose-400/30 bg-rose-400/10"
+                sentiment === 'Positive'
+                  ? "text-[var(--th-success-text)] border-[var(--th-success-border)] bg-[var(--th-success-bg)]"
+                  : "text-[var(--th-danger-text)] border-[var(--th-danger-border)] bg-[var(--th-danger-bg)]"
               )}>
                 {sentiment}
               </span>

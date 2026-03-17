@@ -48,8 +48,8 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
     )}>
       <div className="w-72 md:w-64 h-full flex flex-col">
         <div className="p-6 flex items-center justify-between">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent flex items-center gap-2">
-            <Compass className="w-6 h-6 text-indigo-400" />
+          <h1 className="text-2xl font-bold text-[var(--th-accent-text)] flex items-center gap-2">
+            <Compass className="w-6 h-6 text-[var(--th-accent)]" />
             PulseBoard
           </h1>
           <button onClick={onClose} className="p-2 text-text-tertiary hover:text-text-heading rounded-full hover:bg-[var(--th-surface-btn-overlay)] transition-colors">
@@ -68,7 +68,7 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
                 activeInterest === 'For You'
-                  ? "bg-indigo-500/15 text-indigo-300"
+                  ? "bg-[var(--th-accent-soft)] text-[var(--th-accent-text)]"
                   : "text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-text-primary"
               )}
             >
@@ -80,7 +80,7 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
                 activeInterest === 'Saved'
-                  ? "bg-indigo-500/15 text-indigo-300"
+                  ? "bg-[var(--th-accent-soft)] text-[var(--th-accent-text)]"
                   : "text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-text-primary"
               )}
             >
@@ -100,7 +100,7 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
                   activeInterest === interest
-                    ? "bg-indigo-500/15 text-indigo-300"
+                    ? "bg-[var(--th-accent-soft)] text-[var(--th-accent-text)]"
                     : "text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-text-primary"
                 )}
               >
@@ -155,7 +155,7 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
                   <button
                     onClick={handleExport}
                     disabled={isExporting}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-indigo-400 transition-colors disabled:opacity-50"
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-[var(--th-accent-text)] transition-colors disabled:opacity-50"
                   >
                     {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                     Export Data
@@ -163,7 +163,7 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
                   <button
                     onClick={handleReset}
                     disabled={isResetting}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-amber-400 transition-colors disabled:opacity-50"
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-[var(--th-warning-text)] transition-colors disabled:opacity-50"
                   >
                     {isResetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                     Reset Profile
@@ -177,7 +177,7 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
                   </button>
                   <button
                     onClick={logout}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-rose-400 transition-colors"
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-[var(--th-danger-text)] transition-colors"
                   >
                     <LogOut className="w-4 h-4" />
                     Sign Out

@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-COPY server.ts tsconfig.json ./
+COPY server.ts rss-feeds.ts tsconfig.json ./
 
 ENV NODE_ENV=production
 

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { ExternalLink, Heart, Repeat2, MessageCircle, Bookmark, Sparkles } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { ExternalLink, Heart, Repeat2, MessageCircle, Sparkles, Clock } from 'lucide-react';
 import { motion } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn, formatCompactTimeAgo } from '../lib/utils';
 import { HoverSummary } from './HoverSummary';
+import { SourceMenu } from './SourceMenu';
 
 interface TrendCardProps {
   key?: React.Key;
@@ -12,7 +12,7 @@ interface TrendCardProps {
   onClick: () => void;
   className?: string;
   isBookmarked?: boolean;
-  onBookmark?: (e: React.MouseEvent) => void;
+  onBookmark?: () => void;
 }
 
 function formatCount(n: number): string {
@@ -23,12 +23,13 @@ function formatCount(n: number): string {
 
 export function TrendCard({ trend, index, onClick, className = '', isBookmarked, onBookmark }: TrendCardProps) {
   const [showSummary, setShowSummary] = useState(false);
+  const ageLabel = formatCompactTimeAgo(trend.created_at);
 
   const sentiment = trend.sentiment || 'Neutral';
   const sentimentClass =
-    sentiment === 'Positive' ? 'border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
-    sentiment === 'Negative' ? 'border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.1)]' :
-    'border-border-secondary hover:border-sky-500/30';
+    sentiment === 'Positive' ? 'shadow-[0_0_15px_rgba(16,185,129,0.1)] border-[var(--th-success-border)]' :
+    sentiment === 'Negative' ? 'shadow-[0_0_15px_rgba(239,68,68,0.12)] border-[var(--th-danger-border)]' :
+    'border-border-secondary hover:border-[var(--th-accent-border)]';
 
   const author = trend.author || { name: 'Unknown', username: 'unknown', profile_image_url: '' };
   const metrics = trend.metrics || { likes: 0, retweets: 0, replies: 0 };
@@ -45,6 +46,13 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
       whileTap={{ scale: 0.97 }}
       className={`group relative overflow-hidden rounded-2xl md:rounded-3xl border bg-surface-primary flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
     >
+      <SourceMenu
+        source="X"
+        className="top-4 right-4"
+        isBookmarked={Boolean(isBookmarked)}
+        onToggleBookmark={onBookmark}
+      />
+
       {/* Media image */}
       {imageUrl && (
         <div className="relative h-48 shrink-0 overflow-hidden">
@@ -58,28 +66,12 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
         </div>
       )}
 
-      {onBookmark && (
-        <motion.button
-          whileTap={{ scale: 0.9 }}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onBookmark(e);
-          }}
-          className={cn(
-            "absolute top-4 right-4 z-10 p-2.5 bg-[var(--th-surface-overlay)] hover:bg-[var(--th-surface-overlay-heavy)] rounded-full backdrop-blur-md transition-all border border-border-primary",
-          )}
-        >
-          <Bookmark className={cn("w-4 h-4", isBookmarked ? "fill-indigo-400 text-indigo-400" : "text-text-heading")} />
-        </motion.button>
-      )}
-
       <div className={cn(
         "p-4 md:p-6 flex flex-col flex-1 bg-surface-primary/90 backdrop-blur-xl relative z-20",
         imageUrl && "-mt-12 rounded-t-2xl md:rounded-t-3xl border-t border-border-secondary"
       )}>
         {/* Author row */}
-        <div className="flex items-center gap-3 mb-3">
+        <div className="flex items-center gap-3 mb-3 pr-14">
           {author.profile_image_url ? (
             <img
               src={author.profile_image_url}
@@ -88,7 +80,7 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className="w-10 h-10 rounded-full bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400 font-bold text-sm">
+            <div className="w-10 h-10 rounded-full bg-[var(--th-accent-soft)] border border-[var(--th-accent-border)] flex items-center justify-center text-[var(--th-accent-text)] font-bold text-sm">
               {author.name?.charAt(0) || 'X'}
             </div>
           )}
@@ -96,11 +88,6 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
             <p className="text-sm font-bold text-text-primary truncate">{author.name}</p>
             <p className="text-xs text-text-tertiary truncate">@{author.username}</p>
           </div>
-          {trend.created_at && (
-            <span className="text-xs text-text-muted shrink-0">
-              {formatDistanceToNow(new Date(trend.created_at), { addSuffix: true })}
-            </span>
-          )}
         </div>
 
         {/* Tweet text */}
@@ -111,22 +98,28 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
         {/* Engagement + actions */}
         <div className="mt-auto flex items-center justify-between pt-4 border-t border-border-secondary">
           <div className="flex items-center gap-4 text-xs text-text-tertiary">
-            <span className="flex items-center gap-1.5 hover:text-rose-400 transition-colors">
+            {ageLabel && (
+              <span className="text-text-muted flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                {ageLabel}
+              </span>
+            )}
+            <span className="flex items-center gap-1.5 hover:text-[var(--th-danger-text)] transition-colors">
               <Heart className="w-3.5 h-3.5" />
               {formatCount(metrics.likes)}
             </span>
-            <span className="flex items-center gap-1.5 hover:text-emerald-400 transition-colors">
+            <span className="flex items-center gap-1.5 hover:text-[var(--th-success-text)] transition-colors">
               <Repeat2 className="w-3.5 h-3.5" />
               {formatCount(metrics.retweets)}
             </span>
-            <span className="flex items-center gap-1.5 hover:text-sky-400 transition-colors">
+            <span className="flex items-center gap-1.5 hover:text-[var(--th-accent-text)] transition-colors">
               <MessageCircle className="w-3.5 h-3.5" />
               {formatCount(metrics.replies)}
             </span>
           </div>
           <div className="flex items-center gap-2">
             {trend._interest && (
-              <span className="text-[11px] font-medium text-indigo-400/70 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+              <span className="text-[11px] font-medium text-[var(--th-accent-text)]/80 bg-[var(--th-accent-soft)] px-2 py-0.5 rounded-full">
                 #{trend._interest}
               </span>
             )}
@@ -135,8 +128,8 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
               className={cn(
                 "flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition-all",
                 showSummary
-                  ? "bg-indigo-500 border-indigo-500 text-white"
-                  : "bg-indigo-500/10 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/20 hover:border-indigo-500/40"
+                  ? "bg-[var(--th-accent)] border-[var(--th-accent)] text-white"
+                  : "bg-[var(--th-accent-soft)] border-[var(--th-accent-border)] text-[var(--th-accent-text)] hover:bg-[var(--th-accent-soft-strong)]"
               )}
             >
               <Sparkles className="w-3 h-3" />
@@ -144,7 +137,9 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
             {sentiment !== 'Neutral' && (
               <span className={cn(
                 "text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full border",
-                sentiment === 'Positive' ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : "text-rose-400 border-rose-400/30 bg-rose-400/10"
+                sentiment === 'Positive'
+                  ? "text-[var(--th-success-text)] border-[var(--th-success-border)] bg-[var(--th-success-bg)]"
+                  : "text-[var(--th-danger-text)] border-[var(--th-danger-border)] bg-[var(--th-danger-bg)]"
               )}>
                 {sentiment}
               </span>

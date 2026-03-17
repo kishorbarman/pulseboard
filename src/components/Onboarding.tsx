@@ -102,15 +102,15 @@ export function Onboarding({ user }: { user: any }) {
   return (
     <div className="min-h-screen bg-surface-base text-text-primary flex flex-col items-center justify-center p-4 md:p-6 font-sans relative overflow-hidden">
       {/* Background glow */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-[var(--th-accent-soft)] rounded-full blur-[120px] pointer-events-none" />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="max-w-4xl w-full z-10 text-center"
       >
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 mb-8">
-          <Sparkles className="w-8 h-8 text-indigo-400" />
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--th-accent-soft)] border border-[var(--th-accent-border)] mb-8">
+          <Sparkles className="w-8 h-8 text-[var(--th-accent-text)]" />
         </div>
         <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 text-text-heading">
           What are you into?
@@ -131,8 +131,8 @@ export function Onboarding({ user }: { user: any }) {
                 whileTap={{ scale: 0.95 }}
                 animate={{
                   scale: isSelected ? 1.05 : 1,
-                  backgroundColor: isSelected ? '#6366f1' : unselectedBg,
-                  borderColor: isSelected ? '#818cf8' : unselectedBorder,
+                  backgroundColor: isSelected ? 'var(--th-accent)' : unselectedBg,
+                  borderColor: isSelected ? 'var(--th-accent-strong)' : unselectedBorder,
                   color: isSelected ? '#ffffff' : unselectedText
                 }}
                 className="px-5 py-3 rounded-full border text-sm md:text-base font-medium transition-colors backdrop-blur-sm shadow-lg flex items-center gap-2"
@@ -155,14 +155,14 @@ export function Onboarding({ user }: { user: any }) {
             onKeyDown={handleCustomKeyDown}
             placeholder="Add a custom topic..."
             maxLength={30}
-            className="flex-1 bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 px-5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all shadow-lg"
+            className="flex-1 bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 px-5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-[var(--th-focus-ring)] transition-all shadow-lg"
           />
           <motion.button
             onClick={addCustomTopic}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             disabled={!customTopic.trim() || selected.length >= MAX_TOPICS}
-            className="p-3 rounded-full bg-indigo-500 text-white disabled:opacity-30 hover:bg-indigo-600 transition-colors shadow-lg shrink-0"
+            className="p-3 rounded-full bg-[var(--th-accent)] text-white disabled:opacity-30 hover:bg-[var(--th-accent-strong)] transition-colors shadow-lg shrink-0"
           >
             <Plus className="w-5 h-5" />
           </motion.button>

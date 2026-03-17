@@ -8,8 +8,8 @@ interface MeshGradientProps {
 }
 
 export function MeshGradient({ 
-  color1 = '#4f46e5',
-  color2 = '#7c3aed',
+  color1 = '#0e7490',
+  color2 = '#1f2937',
   className = ''
 }: MeshGradientProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);

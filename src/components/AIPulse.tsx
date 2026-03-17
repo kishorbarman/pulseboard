@@ -120,13 +120,13 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
             initial={{ opacity: 0, y: 10, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.9 }}
-            className="bg-surface-primary/95 backdrop-blur-xl border border-indigo-500/30 rounded-2xl shadow-2xl w-80 max-w-[calc(100vw-2rem)] max-h-[60vh] flex flex-col text-sm text-text-secondary"
+            className="bg-surface-primary/95 backdrop-blur-xl border border-[var(--th-accent-border)] rounded-2xl shadow-2xl w-80 max-w-[calc(100vw-2rem)] max-h-[60vh] flex flex-col text-sm text-text-secondary"
           >
             {/* Header */}
             <div className="flex items-center justify-between p-4 pb-3 shrink-0">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-indigo-400" />
-                <span className="font-bold text-indigo-400 uppercase tracking-wider text-xs">AI Insights</span>
+                <Sparkles className="w-4 h-4 text-[var(--th-accent-text)]" />
+                <span className="font-bold text-[var(--th-accent-text)] uppercase tracking-wider text-xs">AI Insights</span>
               </div>
               <button
                 onClick={() => setIsOpen(false)}
@@ -141,7 +141,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
               {messages.map((msg, i) => (
                 <div key={i} className={msg.role === 'user' ? 'flex justify-end' : ''}>
                   {msg.role === 'user' ? (
-                    <div className="bg-indigo-500/20 text-text-primary border border-indigo-500/30 rounded-xl rounded-br-sm px-3 py-2 max-w-[85%]">
+                    <div className="bg-[var(--th-accent-soft)] text-text-primary border border-[var(--th-accent-border)] rounded-xl rounded-br-sm px-3 py-2 max-w-[85%]">
                       {msg.text}
                     </div>
                   ) : (
@@ -171,12 +171,12 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
                     onKeyDown={handleKeyDown}
                     placeholder="Ask a follow-up..."
                     disabled={responding}
-                    className="flex-1 bg-surface-secondary/50 border border-border-primary rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-indigo-500/50 disabled:opacity-50"
+                    className="flex-1 bg-surface-secondary/50 border border-border-primary rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-[var(--th-focus-ring)] disabled:opacity-50"
                   />
                   <button
                     onClick={sendFollowUp}
                     disabled={!followUp.trim() || responding}
-                    className="p-2 rounded-lg bg-indigo-500 text-white disabled:opacity-30 hover:bg-indigo-600 transition-colors shrink-0"
+                    className="p-2 rounded-lg bg-[var(--th-accent)] text-white disabled:opacity-30 hover:bg-[var(--th-accent-strong)] transition-colors shrink-0"
                   >
                     <ArrowUp className="w-3.5 h-3.5" />
                   </button>
@@ -193,21 +193,21 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext }: 
           whileTap={{ scale: 0.98 }}
           onClick={openInsights}
           disabled={!trendContext}
-          className={`relative flex items-center gap-2 md:gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-indigo-500/30 shadow-lg shadow-indigo-500/10 transition-colors disabled:opacity-40 hover:border-indigo-500/50 px-3 py-2 md:py-3 ${
+          className={`relative flex items-center gap-2 md:gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-[var(--th-accent-border)] shadow-lg transition-colors disabled:opacity-40 hover:border-[var(--th-accent)] px-3 py-2 md:py-3 ${
             trendContext ? 'md:px-4 md:max-w-sm' : 'md:px-4'
           }`}
         >
-          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500 shrink-0">
+          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-[var(--th-accent)] shrink-0">
             {!trendContext ? (
               <Loader2 className="w-4 h-4 animate-spin text-white" />
             ) : (
               <Sparkles className="w-4 h-4 text-white" />
             )}
           </div>
-          <span className="text-sm font-semibold text-indigo-400 md:hidden">{trendContext ? 'Insights' : 'Loading...'}</span>
+          <span className="text-sm font-semibold text-[var(--th-accent-text)] md:hidden">{trendContext ? 'Insights' : 'Loading...'}</span>
           {trendContext ? (
             <div className="hidden md:block flex-1 min-w-0 text-left">
-              <p className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-0.5">AI Insights</p>
+              <p className="text-xs font-semibold text-[var(--th-accent-text)] uppercase tracking-wider mb-0.5">AI Insights</p>
               <p className="text-sm text-text-primary leading-snug line-clamp-2">{trendContext}</p>
             </div>
           ) : (
