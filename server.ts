@@ -6,6 +6,43 @@ import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
+// Smart query cache — stores Gemini-generated queries per topic for 30 minutes
+interface SmartQueryCache {
+  trendContext: string;
+  newsQueries: string[];
+  youtubeQueries: string[];
+  twitterQueries: string[];
+  cachedAt: number;
+}
+
+const smartQueryCache = new Map<string, SmartQueryCache>();
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
+function getCachedSmartQueries(topic: string): SmartQueryCache | null {
+  const key = topic.toLowerCase().trim();
+  const cached = smartQueryCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt > CACHE_TTL_MS) {
+    smartQueryCache.delete(key);
+    return null;
+  }
+  return cached;
+}
+
+function setCachedSmartQueries(topic: string, data: Omit<SmartQueryCache, 'cachedAt'>): SmartQueryCache {
+  const key = topic.toLowerCase().trim();
+  const entry = { ...data, cachedAt: Date.now() };
+  smartQueryCache.set(key, entry);
+  // Evict expired entries if cache grows large
+  if (smartQueryCache.size > 100) {
+    const now = Date.now();
+    for (const [k, v] of smartQueryCache) {
+      if (now - v.cachedAt > CACHE_TTL_MS) smartQueryCache.delete(k);
+    }
+  }
+  return entry;
+}
+
 // Topic-to-query and category mapping for better filtering
 const TOPIC_CONFIG: Record<string, { query: string; category?: string; ytQuery?: string; xQuery?: string }> = {
   // Tech & Science
@@ -52,6 +89,131 @@ function getTopicConfig(topic: string) {
   if (config) return config;
   // For custom topics, use the topic as-is
   return { query: topic };
+}
+
+// Gemini-powered smart query generation using Google Search grounding
+async function generateSmartQueries(topic: string): Promise<SmartQueryCache> {
+  const cached = getCachedSmartQueries(topic);
+  if (cached) {
+    console.log(`Smart queries cache hit for: ${topic}`);
+    return cached;
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+
+  const ai = new GoogleGenAI({ apiKey });
+  const currentDate = new Date().toISOString().split('T')[0];
+  const year = new Date().getFullYear();
+
+  const prompt = `You are a content research assistant. Today is ${currentDate}.
+
+Research the latest news, trends, and discussions about "${topic}" using web search.
+
+Based on your research, return a JSON object with these fields:
+{
+  "trendContext": "A 1-2 sentence summary of what is currently trending about this topic",
+  "newsQueries": ["query1", "query2", "query3"],
+  "youtubeQueries": ["query1", "query2", "query3"],
+  "twitterQueries": ["query1", "query2", "query3"]
+}
+
+Guidelines:
+- newsQueries: Specific search terms for a news API. Include key names, events, or technologies currently in the news. Use quoted phrases for precision.
+- youtubeQueries: Natural language queries for YouTube search. Include "${year}" where relevant for recency.
+- twitterQueries: Twitter search syntax. Include "-is:retweet lang:en" at the end of each. Focus on specific people, products, or events being discussed.
+- Each array must have exactly 3 queries, ordered from most specific/trending to broader.
+- Queries should reflect what is CURRENTLY happening, not generic evergreen terms.
+
+Return ONLY the JSON object, no markdown fences or extra text.`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.0-flash',
+    contents: prompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
+
+  const text = response.text || '';
+
+  let parsed: any;
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (parseError) {
+    console.warn('Failed to parse Gemini smart query response, falling back to TOPIC_CONFIG:', parseError);
+    const config = getTopicConfig(topic);
+    return setCachedSmartQueries(topic, {
+      trendContext: `Latest updates about ${topic}`,
+      newsQueries: [config.query],
+      youtubeQueries: [config.ytQuery || topic],
+      twitterQueries: [config.xQuery || `${topic} -is:retweet lang:en`],
+    });
+  }
+
+  return setCachedSmartQueries(topic, {
+    trendContext: parsed.trendContext || `Latest updates about ${topic}`,
+    newsQueries: Array.isArray(parsed.newsQueries) ? parsed.newsQueries.slice(0, 3) : [topic],
+    youtubeQueries: Array.isArray(parsed.youtubeQueries) ? parsed.youtubeQueries.slice(0, 3) : [topic],
+    twitterQueries: Array.isArray(parsed.twitterQueries) ? parsed.twitterQueries.slice(0, 3) : [`${topic} -is:retweet lang:en`],
+  });
+}
+
+// Generate a detailed summary of the actual fetched content for the AI Insights panel
+async function generateFeedSummary(
+  topic: string,
+  news: any[],
+  videos: any[],
+  posts: any[]
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return `Latest updates about ${topic}`;
+
+  const parts: string[] = [];
+
+  if (news.length > 0) {
+    parts.push('NEWS:\n' + news.slice(0, 8).map(a =>
+      `• ${a.title}${a.description ? ' — ' + a.description.slice(0, 120) : ''}`
+    ).join('\n'));
+  }
+  if (videos.length > 0) {
+    parts.push('VIDEOS:\n' + videos.slice(0, 6).map(v =>
+      `• ${v.snippet?.title || ''}${v.snippet?.description ? ' — ' + v.snippet.description.slice(0, 120) : ''}`
+    ).join('\n'));
+  }
+  if (posts.length > 0) {
+    parts.push('POSTS:\n' + posts.slice(0, 6).map(p =>
+      `• ${(p.text || '').slice(0, 150)}`
+    ).join('\n'));
+  }
+
+  if (parts.length === 0) return `Latest updates about ${topic}`;
+
+  const prompt = `You are a sharp, concise news briefing writer. Based on the content below about "${topic}", write a 3–5 bullet point briefing.
+
+Rules:
+- Each bullet starts with • and is one sentence (max 20 words)
+- Cover the most important themes across news, videos, and social posts
+- Be specific — use names, numbers, events, not vague statements
+- Write in present tense, like a news ticker
+- No intro line, no sign-off — just the bullets
+
+CONTENT:
+${parts.join('\n\n')}`;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+    });
+    return response.text || `Latest updates about ${topic}`;
+  } catch (e) {
+    console.warn('Feed summary generation failed:', e);
+    return `Latest updates about ${topic}`;
+  }
 }
 
 // Gemini-based relevance filtering
@@ -183,6 +345,132 @@ async function processAndStoreItems(items: any[], type: string, getTitle: (item:
   }
   
   return processedItems;
+}
+
+// Reusable fetch helpers for each platform
+async function fetchNewsForQuery(queryStr: string, category?: string): Promise<any[]> {
+  const apiKey = process.env.NEWSDATA_API_KEY;
+  if (!apiKey) return [];
+  try {
+    let url = `https://newsdata.io/api/1/news?apikey=${apiKey}&q=${encodeURIComponent(queryStr)}&language=en`;
+    if (category) url += `&category=${category}`;
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.results || [];
+  } catch (e) {
+    console.error('fetchNewsForQuery error:', e);
+    return [];
+  }
+}
+
+async function fetchYouTubeForQuery(queryStr: string): Promise<any[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) return [];
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=15&q=${encodeURIComponent(queryStr)}&type=video&order=relevance&key=${apiKey}`
+    );
+    const data = await response.json();
+    if (!response.ok) return [];
+
+    let items = data.items || [];
+
+    // Fetch channel subscriber counts for quality filtering
+    const channelIds = [...new Set(items.map((v: any) => v.snippet?.channelId).filter(Boolean))];
+    const channelSubMap = new Map<string, number>();
+    if (channelIds.length > 0) {
+      try {
+        const channelRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds.join(',')}&key=${apiKey}`
+        );
+        const channelData = await channelRes.json();
+        for (const ch of channelData.items || []) {
+          channelSubMap.set(ch.id, parseInt(ch.statistics?.subscriberCount || '0', 10));
+        }
+      } catch (e) {
+        console.error('Failed to fetch channel stats:', e);
+      }
+    }
+
+    items = items
+      .map((item: any) => ({ ...item, _subscriberCount: channelSubMap.get(item.snippet?.channelId) || 0 }))
+      .filter((item: any) => item._subscriberCount >= 100000);
+
+    return items;
+  } catch (e) {
+    console.error('fetchYouTubeForQuery error:', e);
+    return [];
+  }
+}
+
+async function fetchXPostsForQuery(queryStr: string): Promise<any[]> {
+  const bearerToken = process.env.TWITTER_BEARER_TOKEN;
+  if (!bearerToken) return [];
+  try {
+    const params = new URLSearchParams({
+      query: queryStr,
+      max_results: '30',
+      'tweet.fields': 'created_at,public_metrics',
+      expansions: 'author_id,attachments.media_keys',
+      'user.fields': 'name,username,profile_image_url,public_metrics',
+      'media.fields': 'url,preview_image_url,type',
+      sort_order: 'relevancy',
+    });
+
+    const twitterRes = await fetch(
+      `https://api.twitter.com/2/tweets/search/recent?${params}`,
+      { headers: { Authorization: `Bearer ${bearerToken}` } }
+    );
+    if (!twitterRes.ok) return [];
+
+    const twitterData = await twitterRes.json();
+    const tweets = twitterData.data || [];
+    const users = twitterData.includes?.users || [];
+    const media = twitterData.includes?.media || [];
+
+    const userMap = new Map(users.map((u: any) => [u.id, u]));
+    const mediaMap = new Map(media.map((m: any) => [m.media_key, m]));
+
+    let posts = tweets.map((tweet: any) => {
+      const author: any = userMap.get(tweet.author_id) || { name: 'Unknown', username: 'unknown', profile_image_url: '' };
+      const tweetMedia = (tweet.attachments?.media_keys || [])
+        .map((key: string) => mediaMap.get(key))
+        .filter(Boolean)
+        .map((m: any) => {
+          const obj: Record<string, string> = { type: m.type };
+          if (m.url) obj.url = m.url;
+          if (m.preview_image_url) obj.preview_image_url = m.preview_image_url;
+          return obj;
+        });
+
+      const followers = author.public_metrics?.followers_count || 0;
+      const post: Record<string, any> = {
+        id: tweet.id,
+        text: tweet.text,
+        created_at: tweet.created_at,
+        author: { name: author.name, username: author.username, profile_image_url: author.profile_image_url || '', followers },
+        metrics: { likes: tweet.public_metrics?.like_count || 0, retweets: tweet.public_metrics?.retweet_count || 0, replies: tweet.public_metrics?.reply_count || 0 },
+        url: `https://x.com/${author.username}/status/${tweet.id}`,
+      };
+      if (tweetMedia.length > 0) post.media = tweetMedia;
+      return post;
+    });
+
+    posts = posts
+      .filter((p: any) => p.author.followers >= 1000)
+      .sort((a: any, b: any) => {
+        const engA = a.metrics.likes + a.metrics.retweets * 2;
+        const engB = b.metrics.likes + b.metrics.retweets * 2;
+        return engB - engA;
+      })
+      .slice(0, 10);
+
+    return posts;
+  } catch (e) {
+    console.error('fetchXPostsForQuery error:', e);
+    return [];
+  }
 }
 
 // API Routes
@@ -393,6 +681,84 @@ app.get("/api/x-posts", async (req, res) => {
   } catch (error) {
     console.error("Error fetching X posts:", error);
     res.json({ posts: [] });
+  }
+});
+
+app.get("/api/smart-feed", async (req, res) => {
+  try {
+    const topic = (req.query.q as string) || "technology";
+    const warnings: string[] = [];
+
+    // Step 1: Generate smart queries via Gemini with Google Search
+    let smartQueries: SmartQueryCache;
+    try {
+      smartQueries = await generateSmartQueries(topic);
+    } catch (geminiError) {
+      console.warn('Smart query generation failed, falling back to TOPIC_CONFIG:', geminiError);
+      const config = getTopicConfig(topic);
+      smartQueries = {
+        trendContext: `Latest updates about ${topic}`,
+        newsQueries: [config.query],
+        youtubeQueries: [config.ytQuery || topic],
+        twitterQueries: [config.xQuery || `${topic} -is:retweet lang:en`],
+        cachedAt: Date.now(),
+      };
+      warnings.push('AI query generation unavailable, using default queries');
+    }
+
+    // Step 2: Fetch from all APIs in parallel using smart queries
+    const [newsResults, ytResults, xResults] = await Promise.all([
+      (async () => {
+        let results = await fetchNewsForQuery(smartQueries.newsQueries[0]);
+        if (results.length === 0 && smartQueries.newsQueries[1]) {
+          results = await fetchNewsForQuery(smartQueries.newsQueries[1]);
+        }
+        if (results.length === 0) warnings.push('News: No results found');
+        return results;
+      })(),
+      (async () => {
+        let results = await fetchYouTubeForQuery(smartQueries.youtubeQueries[0]);
+        if (results.length === 0 && smartQueries.youtubeQueries[1]) {
+          results = await fetchYouTubeForQuery(smartQueries.youtubeQueries[1]);
+        }
+        if (results.length === 0) warnings.push('YouTube: No results found');
+        return results;
+      })(),
+      (async () => {
+        let results = await fetchXPostsForQuery(smartQueries.twitterQueries[0]);
+        if (results.length === 0 && smartQueries.twitterQueries[1]) {
+          results = await fetchXPostsForQuery(smartQueries.twitterQueries[1]);
+        }
+        if (results.length === 0) warnings.push('X Posts: No results found');
+        return results;
+      })(),
+    ]);
+
+    // Step 3: Apply Gemini relevance filtering
+    const [filteredNews, filteredVideos, filteredPosts] = await Promise.all([
+      filterByRelevance(newsResults, topic, (item) => item.title),
+      filterByRelevance(ytResults, topic, (item) => item.snippet?.title || ''),
+      filterByRelevance(xResults, topic, (item) => item.text),
+    ]);
+
+    // Step 4: Generate content summary + store items in Firestore (in parallel)
+    const [processedNews, processedVideos, processedPosts, feedSummary] = await Promise.all([
+      processAndStoreItems(filteredNews, 'news', (item) => item.title, (item) => item.link),
+      processAndStoreItems(filteredVideos, 'video', (item) => item.snippet?.title, (item) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`),
+      processAndStoreItems(filteredPosts, 'trend', (item) => item.text, (item) => item.url),
+      generateFeedSummary(topic, filteredNews, filteredVideos, filteredPosts),
+    ]);
+
+    res.json({
+      news: { results: processedNews },
+      videos: { items: processedVideos },
+      posts: { posts: processedPosts },
+      trendContext: feedSummary,
+      warnings,
+    });
+  } catch (error) {
+    console.error("Error in smart-feed:", error);
+    res.status(500).json({ error: "Failed to fetch smart feed" });
   }
 });
 

@@ -8,6 +8,7 @@ interface AIPulseProps {
   videos: any[];
   trends: any[];
   activeInterest: string;
+  trendContext?: string;
 }
 
 interface ChatMessage {
@@ -15,7 +16,7 @@ interface ChatMessage {
   text: string;
 }
 
-export function AIPulse({ news, videos, trends, activeInterest }: AIPulseProps) {
+export function AIPulse({ news, videos, trends, activeInterest, trendContext }: AIPulseProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -62,6 +63,16 @@ export function AIPulse({ news, videos, trends, activeInterest }: AIPulseProps) 
       return;
     }
 
+    // If we already have a precomputed trend context, show it instantly
+    if (trendContext) {
+      contentRef.current = buildContentString();
+      setMessages([{ role: 'model', text: trendContext }]);
+      cachedInterestRef.current = activeInterest;
+      setIsOpen(true);
+      return;
+    }
+
+    // Otherwise fall back to generating a summary via Gemini
     setIsOpen(true);
     setLoading(true);
     setMessages([]);
@@ -215,27 +226,36 @@ export function AIPulse({ news, videos, trends, activeInterest }: AIPulseProps) 
       </AnimatePresence>
 
       <motion.button
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.95 }}
+        whileHover={{ scale: 1.01 }}
+        whileTap={{ scale: 0.98 }}
         onClick={generateSummary}
         disabled={!hasContent}
-        className={`relative flex items-center gap-2 px-4 py-2.5 rounded-full bg-indigo-500 text-white font-medium text-sm shadow-lg shadow-indigo-500/25 transition-colors disabled:opacity-40 ${
-          loading ? 'bg-indigo-600' : 'hover:bg-indigo-600'
+        className={`relative flex items-center gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-indigo-500/30 shadow-lg shadow-indigo-500/10 transition-colors disabled:opacity-40 hover:border-indigo-500/50 ${
+          trendContext && !isOpen ? 'px-4 py-3 max-w-xs md:max-w-sm' : 'px-4 py-2.5'
         }`}
       >
         {loading && (
           <motion.div
-            className="absolute inset-0 rounded-full border-2 border-indigo-400"
-            animate={{ scale: [1, 1.3], opacity: [1, 0] }}
+            className="absolute inset-0 rounded-2xl border-2 border-indigo-400"
+            animate={{ scale: [1, 1.02], opacity: [1, 0] }}
             transition={{ duration: 1.5, repeat: Infinity }}
           />
         )}
-        {loading ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
+        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500 shrink-0">
+          {loading ? (
+            <Loader2 className="w-4 h-4 animate-spin text-white" />
+          ) : (
+            <Sparkles className="w-4 h-4 text-white" />
+          )}
+        </div>
+        {trendContext && !isOpen ? (
+          <div className="flex-1 min-w-0 text-left">
+            <p className="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-0.5">AI Insights</p>
+            <p className="text-sm text-text-primary leading-snug line-clamp-2">{trendContext}</p>
+          </div>
         ) : (
-          <Sparkles className="w-4 h-4" />
+          <span className="text-sm font-medium text-text-primary">{loading ? 'Summarizing...' : 'Summarize feed'}</span>
         )}
-        <span>{loading ? 'Summarizing...' : 'Summarize feed'}</span>
       </motion.button>
     </div>
   );

@@ -8,7 +8,6 @@ import { logClickHistory, subscribeToBookmarks, toggleBookmark } from '../lib/fi
 import { AlertCircle, Search, Menu, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { MeshGradient } from './MeshGradient';
-import { PulseTicker } from './PulseTicker';
 import { AIPulse } from './AIPulse';
 import { About } from './About';
 import { cn } from '../lib/utils';
@@ -76,6 +75,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
+  const [trendContext, setTrendContext] = useState<string>('');
   
   // Initialize sidebar state based on window width
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -106,101 +106,94 @@ export function Dashboard({ user, userData }: DashboardProps) {
       setLoading(true);
       setError(null);
       setSourceWarnings([]);
+      setTrendContext('');
       try {
         let fetchedNews: any[] = [];
         let fetchedVideos: any[] = [];
         let fetchedTrends: any[] = [];
 
-        const collectWarnings = (newsData: any, ytData: any, xData: any) => {
-          const warnings: string[] = [];
-          if (!newsData.results) warnings.push(`News: ${newsData.error || 'Failed to load'}`);
-          if (!ytData.items) warnings.push(`YouTube: ${ytData.error || 'Failed to load'}`);
-          if (!xData.posts) warnings.push(`X Posts: ${xData.error || 'Failed to load'}`);
-          setSourceWarnings(warnings);
-        };
+        // Helper to parse smart-feed response into content arrays
+        const parseSmartFeed = (data: any) => ({
+          news: data.news?.results || [],
+          videos: data.videos?.items || [],
+          posts: data.posts?.posts || [],
+          trendContext: data.trendContext || '',
+          warnings: data.warnings || [],
+        });
 
         if (activeInterest === 'Saved') {
           fetchedNews = bookmarks.filter(b => b.type === 'news').map(b => b.item);
           fetchedVideos = bookmarks.filter(b => b.type === 'video').map(b => b.item);
           fetchedTrends = bookmarks.filter(b => b.type === 'trend').map(b => b.item);
         } else if (activeInterest === 'For You') {
-          // Fetch personalized feed (70%)
-          const personalizedRes = await fetch(`/api/personalized-feed?userId=${user.uid}`);
+          // Fetch personalized feed (70%) + smart fresh content (30%)
+          const freshInterest = interests[0] || 'Technology';
+          const [personalizedRes, smartRes] = await Promise.all([
+            fetch(`/api/personalized-feed?userId=${user.uid}`),
+            fetch(`/api/smart-feed?q=${encodeURIComponent(freshInterest)}`),
+          ]);
+
           const personalizedData = await personalizedRes.json();
           const pItems = personalizedData.items || [];
+          const smartData = await smartRes.json().catch(() => ({}));
+          const smart = parseSmartFeed(smartData);
 
-          // Fetch fresh content from first interest (30%)
-          const freshInterest = interests[0] || 'Technology';
-          const [newsRes, ytRes, xRes] = await Promise.all([
-            fetch(`/api/news?q=${encodeURIComponent(freshInterest)}`),
-            fetch(`/api/youtube?q=${encodeURIComponent(freshInterest)}`),
-            fetch(`/api/x-posts?q=${encodeURIComponent(freshInterest)}`)
-          ]);
-
-          const [newsData, ytData, xData] = await Promise.all([
-            newsRes.json().catch(() => ({})),
-            ytRes.json().catch(() => ({})),
-            xRes.json().catch(() => ({})),
-          ]);
-
-          collectWarnings(newsData, ytData, xData);
+          if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
+          setTrendContext(smart.trendContext);
 
           // Separate personalized items by type
           const pNews = pItems.filter((i: any) => i.type === 'news').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
           const pVideos = pItems.filter((i: any) => i.type === 'video').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
           const pTrends = pItems.filter((i: any) => i.type === 'trend').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
 
-          // Merge personalized + fresh, then dedupe
+          // Merge personalized + smart fresh, then dedupe
           fetchedNews = dedupeItems(
-            [...pNews, ...(newsData.results || [])],
+            [...pNews, ...smart.news],
             (item: any) => item.title || '',
             (item: any) => item.link || ''
           );
           fetchedVideos = dedupeItems(
-            [...pVideos, ...(ytData.items || [])],
+            [...pVideos, ...smart.videos],
             (item: any) => item.snippet?.title || '',
             (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
           );
           fetchedTrends = dedupeItems(
-            [...pTrends, ...(xData.posts || [])],
+            [...pTrends, ...smart.posts],
             (item: any) => item.id || item.text || '',
             (item: any) => item.url || ''
           );
 
         } else {
-          // Fetch specific interest or search query
-          const [newsRes, ytRes, xRes] = await Promise.all([
-            fetch(`/api/news?q=${encodeURIComponent(activeInterest)}`),
-            fetch(`/api/youtube?q=${encodeURIComponent(activeInterest)}`),
-            fetch(`/api/x-posts?q=${encodeURIComponent(activeInterest)}`)
-          ]);
+          // Smart feed for specific interest or search query
+          const smartRes = await fetch(`/api/smart-feed?q=${encodeURIComponent(activeInterest)}`);
+          const smartData = await smartRes.json().catch(() => ({}));
 
-          const [newsData, ytData, xData] = await Promise.all([
-            newsRes.json().catch(() => ({})),
-            ytRes.json().catch(() => ({})),
-            xRes.json().catch(() => ({})),
-          ]);
+          if (smartData.error) {
+            throw new Error(smartData.error);
+          }
 
-          collectWarnings(newsData, ytData, xData);
+          const smart = parseSmartFeed(smartData);
+          if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
+          setTrendContext(smart.trendContext);
 
           fetchedNews = dedupeItems(
-            newsData.results || [],
+            smart.news,
             (item: any) => item.title || '',
             (item: any) => item.link || ''
           );
           fetchedVideos = dedupeItems(
-            ytData.items || [],
+            smart.videos,
             (item: any) => item.snippet?.title || '',
             (item: any) => `https://youtube.com/watch?v=${item.id?.videoId || item.id}`
           );
           fetchedTrends = dedupeItems(
-            xData.posts || [],
+            smart.posts,
             (item: any) => item.id || item.text || '',
             (item: any) => item.url || ''
           );
 
           if (fetchedNews.length === 0 && fetchedVideos.length === 0 && fetchedTrends.length === 0) {
-            throw new Error(newsData.error || ytData.error || xData.error || 'No content found for this topic.');
+            throw new Error('No content found for this topic.');
           }
         }
 
@@ -313,8 +306,6 @@ export function Dashboard({ user, userData }: DashboardProps) {
       />
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
-        <PulseTicker trends={trends} videos={videos} />
-        
         <main className="flex-1 overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full mobile-hide-scrollbar">
           {activeInterest === 'About' ? (
             <About onBack={() => setActiveInterest('For You')} />
@@ -432,7 +423,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
         onClose={() => setIsModalOpen(false)} 
         videoId={activeVideoId} 
       />
-      <AIPulse news={news} videos={videos} trends={trends} activeInterest={activeInterest} />
+      <AIPulse news={news} videos={videos} trends={trends} activeInterest={activeInterest} trendContext={trendContext} />
     </div>
   );
 }
