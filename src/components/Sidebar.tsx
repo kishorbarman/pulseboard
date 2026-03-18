@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogOut, Hash, Compass, User, RefreshCw, Loader2, Sparkles, Bookmark, X, PanelLeftClose, Download, Sun, Moon, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { LogOut, Hash, Compass, User, RefreshCw, Loader2, Sparkles, Bookmark, X, PanelLeftClose, Download, Sun, Moon, ChevronDown, ChevronUp, Info, Newspaper } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { logout, resetProfile, exportUserData } from '../lib/firebase';
 import { useTheme } from '../lib/theme';
@@ -90,6 +90,18 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
             >
               <Bookmark className="w-4 h-4" />
               Saved
+            </button>
+            <button
+              onClick={() => handleInterestClick('Daily Brief')}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
+                activeInterest === 'Daily Brief'
+                  ? "bg-[var(--th-accent-soft)] text-[var(--th-accent-text)]"
+                  : "text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-text-primary"
+              )}
+            >
+              <Newspaper className="w-4 h-4" />
+              Daily Brief
             </button>
           </nav>
 

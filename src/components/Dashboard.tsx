@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { MeshGradient } from './MeshGradient';
 import { AIPulse } from './AIPulse';
 import { About } from './About';
+import { DailyBrief } from './DailyBrief';
 import { cn } from '../lib/utils';
 
 interface DashboardProps {
@@ -154,6 +155,17 @@ export function Dashboard({ user, userData }: DashboardProps) {
   };
 
   const fetchData = useCallback(async (forceRefresh = false) => {
+    if (activeInterest === 'About' || activeInterest === 'Daily Brief') {
+      setLoading(false);
+      setRefreshing(false);
+      setError(null);
+      setSourceWarnings([]);
+      setTrendContext('');
+      setInterestSummaries({});
+      setHasMoreContent(false);
+      return;
+    }
+
     if (forceRefresh || loadMultiplier > 1) {
       setRefreshing(true);
     } else {
@@ -373,6 +385,8 @@ export function Dashboard({ user, userData }: DashboardProps) {
         >
           {activeInterest === 'About' ? (
             <About onBack={() => changeInterest('For You')} />
+          ) : activeInterest === 'Daily Brief' ? (
+            <DailyBrief userId={user.uid} />
           ) : (
             <>
               <header className="mb-4 md:mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 md:gap-6">
@@ -560,14 +574,16 @@ export function Dashboard({ user, userData }: DashboardProps) {
         )}
       </AnimatePresence>
 
-      <AIPulse
-        news={news}
-        videos={videos}
-        trends={trends}
-        activeInterest={activeInterest}
-        trendContext={trendContext}
-        interestSummaries={interestSummaries}
-      />
+      {activeInterest !== 'About' && activeInterest !== 'Daily Brief' && (
+        <AIPulse
+          news={news}
+          videos={videos}
+          trends={trends}
+          activeInterest={activeInterest}
+          trendContext={trendContext}
+          interestSummaries={interestSummaries}
+        />
+      )}
     </div>
   );
 }

@@ -40,6 +40,11 @@ Give users a fast, low-clutter command center for what matters across their inte
 ### AI summary experience
 - **For You**: compact cross-feed overview (5–6 bullets max) plus “Expand by interest”.
 - **Card-level summary**: quick TL;DR with follow-up chat.
+- **Daily Brief (Morning Digest)**:
+  - Server-generated daily document per user at 6:00 AM (`America/Los_Angeles` by default)
+  - AI topic snapshots with multi-item synthesis per interest
+  - Cohesive cross-topic overview narrative + watchlist
+  - History view so users can reopen past briefs from the sidebar
 
 ### UX features
 - Unified card layout for News / YouTube / X.
@@ -95,6 +100,22 @@ Give users a fast, low-clutter command center for what matters across their inte
    - `interestSummaries` (expandable detail)
    - `pagination` metadata
 
+### Daily Brief pipeline (`/api/daily-brief`)
+1. Resolve user interests.
+2. Read per-interest cache (or fetch + cache on miss).
+3. Rank items with personalization.
+4. Build topic-level signal sets (news/videos/posts) per interest.
+5. Generate AI topic synthesis:
+   - `detailedSummary`
+   - `whyItMatters`
+   - `keyDevelopments`
+6. Generate AI cross-topic overview:
+   - `overviewNarrative`
+   - `overviewBullets`
+   - `crossTopicThemes`
+7. Persist as `users/{uid}/dailyBriefings/{YYYY-MM-DD}`.
+8. Return latest or requested date; history exposed separately.
+
 ## 5. Caching and Refresh
 
 - Per-interest Firestore cache: `feedCache/{interest}`
@@ -102,6 +123,7 @@ Give users a fast, low-clutter command center for what matters across their inte
 - Scheduled background refresh: **every 3 hours**
 - Startup warm: delayed initial refresh after server boot
 - Onboarding warm: fire-and-forget refresh for selected interests
+- Daily Brief scheduler: generates once each morning near **6:00 AM** (`DAILY_BRIEF_TZ`)
 
 ## 6. Ranking Spec (Implemented)
 
@@ -135,6 +157,10 @@ Built from Firestore user profile + recent history:
   - Query: `q`, `userId`, `refresh`, `loadMultiplier`, `debugKey`
 - `GET /api/smart-feed-foryou`
   - Query: `interests`, `userId`, `refresh`, `loadMultiplier`, `debugKey`
+- `GET /api/daily-brief`
+  - Query: `userId`, optional `date=YYYY-MM-DD`, optional `refresh=true` (today only)
+- `GET /api/daily-brief-history`
+  - Query: `userId`, optional `limit` (default 14, max 30)
 - `POST /api/refresh-feeds`
   - Body: `{ interests: string[] }`
 - `POST /api/log-interaction`
@@ -150,6 +176,7 @@ Built from Firestore user profile + recent history:
 - `users/{uid}`: profile, interests, vector/profile metadata
 - `users/{uid}/history`: click history
 - `users/{uid}/bookmarks`: saved items
+- `users/{uid}/dailyBriefings/{dateKey}`: daily morning digest snapshot + overview + must-read list
 
 ## 9. Local Development
 
@@ -186,6 +213,7 @@ Commonly used:
 - `VITE_FIREBASE_*`
 - `FIREBASE_CLIENT_EMAIL`
 - `FIREBASE_PRIVATE_KEY`
+- `DAILY_BRIEF_TZ` (optional, defaults to `America/Los_Angeles`)
 
 Ranking flags:
 - `ENABLE_GEMINI_RERANK` (`false` to disable)

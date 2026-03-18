@@ -19,6 +19,40 @@ interface FeedCacheDocument {
   updatedAt: FirebaseFirestore.Timestamp;
 }
 
+interface DailyBriefTopicSnapshot {
+  interest: string;
+  headline: string;
+  source: string;
+  type: 'news' | 'video' | 'trend';
+  whyItMatters: string;
+  detailedSummary: string;
+  keyDevelopments: string[];
+  signalCount: { news: number; videos: number; posts: number };
+}
+
+interface DailyBriefMustReadItem {
+  type: 'news' | 'video' | 'trend';
+  title: string;
+  url: string;
+  source: string;
+  interest: string;
+  publishedAt: string;
+}
+
+interface DailyBriefDocument {
+  dateKey: string;
+  timezone: string;
+  generatedAtIso: string;
+  executiveSummary: string;
+  overviewNarrative: string;
+  overviewBullets: string[];
+  crossTopicThemes: string[];
+  watchlist: string[];
+  topicSnapshots: DailyBriefTopicSnapshot[];
+  mustRead: DailyBriefMustReadItem[];
+  counts: { news: number; videos: number; posts: number };
+}
+
 function sanitizeForFirestore<T = any>(value: T): T {
   if (Array.isArray(value)) {
     return value
@@ -51,6 +85,7 @@ const FORYOU_BASE_POST_LIMIT = 12;
 const FORYOU_PER_INTEREST_NEWS_LIMIT = 6;
 const FORYOU_PER_INTEREST_VIDEO_LIMIT = 4;
 const FORYOU_PER_INTEREST_POST_LIMIT = 4;
+const DAILY_BRIEF_TZ = process.env.DAILY_BRIEF_TZ || 'America/Los_Angeles';
 const ENABLE_GEMINI_RERANK = process.env.ENABLE_GEMINI_RERANK !== 'false';
 const GEMINI_RERANK_TOP_K = Math.max(5, Math.min(30, Number(process.env.GEMINI_RERANK_TOP_K || 15)));
 const currentlyRefreshing = new Set<string>();
@@ -79,6 +114,7 @@ interface RssSourceMetrics {
 }
 
 const rssSourceMetrics = new Map<string, RssSourceMetrics>();
+let lastDailyBriefSchedulerRunKey = '';
 
 function logNewsIngestionMetrics(
   topic: string,
@@ -158,6 +194,38 @@ function logRssSourceMetrics(topic: string, items: any[], isCurated: boolean): v
 
 function getFeedCacheKey(interest: string): string {
   return interest.toLowerCase().trim();
+}
+
+function getTzParts(date: Date, timeZone: string): { year: number; month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(date);
+
+  const map: Record<string, string> = {};
+  for (const p of parts) {
+    if (p.type !== 'literal') map[p.type] = p.value;
+  }
+
+  return {
+    year: Number(map.year || '0'),
+    month: Number(map.month || '1'),
+    day: Number(map.day || '1'),
+    hour: Number(map.hour || '0'),
+    minute: Number(map.minute || '0'),
+  };
+}
+
+function getDateKeyInTz(date: Date, timeZone: string): string {
+  const p = getTzParts(date, timeZone);
+  const mm = String(p.month).padStart(2, '0');
+  const dd = String(p.day).padStart(2, '0');
+  return `${p.year}-${mm}-${dd}`;
 }
 
 function parseLoadMultiplier(raw: unknown): number {
@@ -984,6 +1052,349 @@ ${topPosts || '• none'}`;
   }
 }
 
+function dedupeByKey<T>(items: T[], keyFn: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildWhyItMatters(item: any, type: 'news' | 'video' | 'trend'): string {
+  const title = getItemTitle(item, type);
+  const lower = title.toLowerCase();
+  if (/earnings|guidance|inflation|rates|gdp|jobs/.test(lower)) return 'Potential market and macro impact today.';
+  if (/launch|release|rollout|announce/.test(lower)) return 'Likely to shape near-term product and adoption trends.';
+  if (/policy|regulation|court|congress|senate|election/.test(lower)) return 'Regulatory or policy shifts may change the landscape.';
+  if (/security|breach|vulnerability|attack/.test(lower)) return 'Security implications could affect users, companies, or infrastructure.';
+  if (type === 'trend') return 'Strong social momentum signals this is getting broad attention.';
+  return 'High relevance across your selected interests right now.';
+}
+
+function toMustReadItem(item: any, type: 'news' | 'video' | 'trend'): DailyBriefMustReadItem {
+  const url = type === 'news'
+    ? String(item?.link || '')
+    : type === 'video'
+      ? `https://youtube.com/watch?v=${item?.id?.videoId || item?.id || ''}`
+      : String(item?.url || '');
+  const source = type === 'news'
+    ? String(item?.source_id || 'News')
+    : type === 'video'
+      ? String(item?.snippet?.channelTitle || 'YouTube')
+      : String(item?.author?.name || 'X');
+  const publishedAt = String(
+    type === 'news'
+      ? item?.pubDate || ''
+      : type === 'video'
+        ? item?.snippet?.publishedAt || ''
+        : item?.created_at || ''
+  );
+  return {
+    type,
+    title: getItemTitle(item, type),
+    url,
+    source,
+    interest: String(item?._interest || ''),
+    publishedAt,
+  };
+}
+
+function deriveWatchlist(items: DailyBriefMustReadItem[]): string[] {
+  const out: string[] = [];
+  for (const item of items.slice(0, 18)) {
+    const lower = item.title.toLowerCase();
+    if (/earnings|fomc|rate|inflation|gdp|jobs/.test(lower)) out.push(`Watch macro signal: ${item.title}`);
+    else if (/launch|event|keynote|announcement|release/.test(lower)) out.push(`Watch product milestone: ${item.title}`);
+    else if (/vote|policy|regulation|court|senate|congress/.test(lower)) out.push(`Watch policy move: ${item.title}`);
+    if (out.length >= 4) break;
+  }
+  if (out.length === 0 && items[0]) out.push(`Watch this first: ${items[0].title}`);
+  return out.slice(0, 4);
+}
+
+interface TopicSynthesisInput {
+  interest: string;
+  topHeadlines: string[];
+  signalCount: { news: number; videos: number; posts: number };
+}
+
+function fallbackTopicDetailedSummary(input: TopicSynthesisInput): {
+  detailedSummary: string;
+  whyItMatters: string;
+  keyDevelopments: string[];
+} {
+  const [h1, h2, h3] = input.topHeadlines;
+  const summaryParts = [h1, h2, h3].filter(Boolean);
+  const detailedSummary = summaryParts.length > 0
+    ? `Momentum is building around ${input.interest.toLowerCase()}: ${summaryParts.join(' | ')}.`
+    : `Coverage for ${input.interest.toLowerCase()} is limited right now, but early signals are emerging.`;
+  return {
+    detailedSummary,
+    whyItMatters: `This can influence near-term decisions in ${input.interest.toLowerCase()}.`,
+    keyDevelopments: summaryParts.slice(0, 3),
+  };
+}
+
+function fallbackOverviewFromTopics(topicInputs: TopicSynthesisInput[]): {
+  overviewNarrative: string;
+  overviewBullets: string[];
+  themes: string[];
+  executiveSummary: string;
+} {
+  const lines = topicInputs.slice(0, 6).map((t) => `• ${t.interest}: ${t.topHeadlines[0] || 'Fresh developments are unfolding.'}`);
+  const overviewBullets = lines.slice(0, 4);
+  const overviewNarrative = topicInputs.length > 0
+    ? `Today’s feed shows activity across ${topicInputs.length} interests, with the strongest signals clustered around ${topicInputs.slice(0, 3).map(t => t.interest).join(', ')}.`
+    : 'Today’s feed is light, with limited cross-topic movement.';
+  const themes = topicInputs.slice(0, 3).map((t) => `${t.interest} remains active in your feed.`);
+  return {
+    overviewNarrative,
+    overviewBullets,
+    themes,
+    executiveSummary: lines.join('\n') || '• Your morning brief is ready with the latest cross-topic updates.',
+  };
+}
+
+async function generateDailyBriefNarrative(
+  interests: string[],
+  topicInputs: TopicSynthesisInput[],
+  mustRead: DailyBriefMustReadItem[]
+): Promise<{
+  executiveSummary: string;
+  overviewNarrative: string;
+  overviewBullets: string[];
+  themes: string[];
+  topicInsights: Record<string, { detailedSummary: string; whyItMatters: string; keyDevelopments: string[] }>;
+}> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    const fallbackOverview = fallbackOverviewFromTopics(topicInputs);
+    const topicInsights: Record<string, { detailedSummary: string; whyItMatters: string; keyDevelopments: string[] }> = {};
+    for (const topic of topicInputs) topicInsights[topic.interest] = fallbackTopicDetailedSummary(topic);
+    return {
+      executiveSummary: fallbackOverview.executiveSummary,
+      overviewNarrative: fallbackOverview.overviewNarrative,
+      overviewBullets: fallbackOverview.overviewBullets,
+      themes: fallbackOverview.themes,
+      topicInsights,
+    };
+  }
+
+  const topicLines = topicInputs.slice(0, 12).map((t) => {
+    const signals = `news=${t.signalCount.news}, videos=${t.signalCount.videos}, posts=${t.signalCount.posts}`;
+    const headlines = t.topHeadlines.slice(0, 8).map((h) => `  - ${h}`).join('\n');
+    return `${t.interest} (${signals})\n${headlines}`;
+  }).join('\n\n');
+  const mustReadLines = mustRead.slice(0, 10).map((m) => `• [${m.type}] ${m.title}`).join('\n');
+  const prompt = `You are creating a high-signal daily brief for a professional user.
+Interests: ${interests.join(', ')}.
+
+Return JSON only:
+{
+  "overviewNarrative": "2 short paragraphs that connect all topics into one cohesive story",
+  "overviewBullets": ["bullet", "bullet", "bullet", "bullet"],
+  "themes": ["theme", "theme", "theme"],
+  "topics": [
+    {
+      "interest": "string",
+      "detailedSummary": "2-3 sentence synthesis across all retrieved items for this topic",
+      "whyItMatters": "1 concise sentence",
+      "keyDevelopments": ["item", "item", "item"]
+    }
+  ]
+}
+
+Rules:
+- The overview must read as one coherent narrative across topics, not disconnected bullets.
+- overviewBullets max 4, each <= 20 words.
+- themes max 3, each <= 16 words.
+- For each topic, use multiple retrieved signals, not just one headline.
+- detailedSummary should be concrete and avoid hype.
+- Be specific with names/events
+- No markdown fences
+
+TOPIC SIGNALS:
+${topicLines}
+
+MUST READ:
+${mustReadLines}`;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+    });
+    const text = response.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in summary response');
+    const parsed = JSON.parse(jsonMatch[0]);
+    const overviewNarrative = String(parsed.overviewNarrative || '').trim();
+    const overviewBullets = Array.isArray(parsed.overviewBullets) ? parsed.overviewBullets.slice(0, 4).map((x: any) => String(x).trim()).filter(Boolean) : [];
+    const themes = Array.isArray(parsed.themes) ? parsed.themes.slice(0, 3) : [];
+    const topics = Array.isArray(parsed.topics) ? parsed.topics : [];
+    const topicInsights: Record<string, { detailedSummary: string; whyItMatters: string; keyDevelopments: string[] }> = {};
+    for (const input of topicInputs) {
+      const matched = topics.find((t: any) => String(t?.interest || '').toLowerCase() === input.interest.toLowerCase());
+      if (!matched) {
+        topicInsights[input.interest] = fallbackTopicDetailedSummary(input);
+        continue;
+      }
+      topicInsights[input.interest] = {
+        detailedSummary: String(matched.detailedSummary || '').trim() || fallbackTopicDetailedSummary(input).detailedSummary,
+        whyItMatters: String(matched.whyItMatters || '').trim() || fallbackTopicDetailedSummary(input).whyItMatters,
+        keyDevelopments: Array.isArray(matched.keyDevelopments)
+          ? matched.keyDevelopments.slice(0, 3).map((x: any) => String(x).trim()).filter(Boolean)
+          : fallbackTopicDetailedSummary(input).keyDevelopments,
+      };
+    }
+    const normalizedExecutive = (overviewBullets.length > 0 ? overviewBullets : fallbackOverviewFromTopics(topicInputs).overviewBullets)
+      .map((line: string) => line.startsWith('•') ? line : `• ${line}`);
+    return {
+      executiveSummary: normalizedExecutive.join('\n'),
+      overviewNarrative: overviewNarrative || fallbackOverviewFromTopics(topicInputs).overviewNarrative,
+      overviewBullets: normalizedExecutive.slice(0, 4),
+      themes: themes.map((t: any) => String(t).trim()).filter(Boolean).slice(0, 3),
+      topicInsights,
+    };
+  } catch (e) {
+    console.warn('[DailyBrief] Executive summary fallback:', e);
+    const fallbackOverview = fallbackOverviewFromTopics(topicInputs);
+    const topicInsights: Record<string, { detailedSummary: string; whyItMatters: string; keyDevelopments: string[] }> = {};
+    for (const topic of topicInputs) topicInsights[topic.interest] = fallbackTopicDetailedSummary(topic);
+    return {
+      executiveSummary: fallbackOverview.executiveSummary,
+      overviewNarrative: fallbackOverview.overviewNarrative,
+      overviewBullets: fallbackOverview.overviewBullets,
+      themes: fallbackOverview.themes,
+      topicInsights,
+    };
+  }
+}
+
+async function buildDailyBriefForUser(userId: string, dateKey: string, forceRefresh = false): Promise<DailyBriefDocument> {
+  if (!firestore) throw new Error('Firestore not configured');
+
+  const briefRef = firestore.collection('users').doc(userId).collection('dailyBriefings').doc(dateKey);
+  if (!forceRefresh) {
+    const existing = await briefRef.get();
+    if (existing.exists) return existing.data() as DailyBriefDocument;
+  }
+
+  const userDoc = await firestore.collection('users').doc(userId).get();
+  const interests = Array.isArray(userDoc.data()?.interests) ? (userDoc.data()?.interests as string[]) : [];
+  if (interests.length === 0) throw new Error('No interests configured for user');
+
+  const caches = await Promise.all(interests.map(async (interest) => {
+    const cached = await readFeedCache(interest);
+    if (cached) return { interest, data: cached };
+    const fetched = await fetchAndCacheSingleInterest(interest);
+    return {
+      interest,
+      data: {
+        ...fetched,
+        queries: { newsQueries: [], youtubeQueries: [], twitterQueries: [] },
+      } as FeedCacheDocument,
+    };
+  }));
+
+  const allNews = dedupeByKey(
+    caches.flatMap(c => c.data.news.map((n: any) => ({ ...sanitizeNewsItemForResponse(n), _interest: c.interest }))),
+    (i: any) => i.link || i.title
+  );
+  const allVideos = dedupeByKey(
+    caches.flatMap(c => c.data.videos.map((v: any) => ({ ...v, _interest: c.interest }))),
+    (i: any) => i.id?.videoId || i.id
+  );
+  const allPosts = dedupeByKey(
+    caches.flatMap(c => c.data.posts.map((p: any) => ({ ...p, _interest: c.interest }))),
+    (i: any) => i.id || i.text
+  );
+
+  const signals = await getPersonalizationSignals(userId);
+  const rankedNews = applyPersonalizationRank(allNews, 'news', signals);
+  const rankedVideos = applyPersonalizationRank(allVideos, 'video', signals);
+  const rankedPosts = applyPersonalizationRank(allPosts, 'trend', signals);
+
+  const topicInputs: TopicSynthesisInput[] = interests.map((interest) => {
+    const topicNews = rankedNews.filter((x: any) => x._interest === interest).slice(0, 8);
+    const topicVideos = rankedVideos.filter((x: any) => x._interest === interest).slice(0, 4);
+    const topicPosts = rankedPosts.filter((x: any) => x._interest === interest).slice(0, 6);
+    const topHeadlines = [
+      ...topicNews.map((x: any) => getItemTitle(x, 'news')),
+      ...topicVideos.map((x: any) => getItemTitle(x, 'video')),
+      ...topicPosts.map((x: any) => getItemTitle(x, 'trend')),
+    ].filter(Boolean).slice(0, 10);
+    return {
+      interest,
+      topHeadlines,
+      signalCount: { news: topicNews.length, videos: topicVideos.length, posts: topicPosts.length },
+    };
+  });
+
+  const mustReadNews = rankedNews.slice(0, 8).map((i: any) => toMustReadItem(i, 'news'));
+  const mustReadVideos = rankedVideos.slice(0, 3).map((i: any) => toMustReadItem(i, 'video'));
+  const mustReadPosts = rankedPosts.slice(0, 3).map((i: any) => toMustReadItem(i, 'trend'));
+  const mustRead = [...mustReadNews, ...mustReadVideos, ...mustReadPosts].slice(0, 12);
+
+  const executive = await generateDailyBriefNarrative(interests, topicInputs, mustRead);
+  const watchlist = deriveWatchlist(mustRead);
+
+  const topicSnapshots: DailyBriefTopicSnapshot[] = interests.map<DailyBriefTopicSnapshot>((interest) => {
+    const n = rankedNews.find((x: any) => x._interest === interest);
+    const v = rankedVideos.find((x: any) => x._interest === interest);
+    const p = rankedPosts.find((x: any) => x._interest === interest);
+    const chosen = n || v || p;
+    const chosenType: 'news' | 'video' | 'trend' | null = n ? 'news' : v ? 'video' : p ? 'trend' : null;
+    const topicInput = topicInputs.find((t) => t.interest === interest) || { interest, topHeadlines: [], signalCount: { news: 0, videos: 0, posts: 0 } };
+    const insight = executive.topicInsights[interest] || fallbackTopicDetailedSummary(topicInput);
+
+    if (!chosen) {
+      return {
+        interest,
+        headline: topicInput.topHeadlines[0] || 'No major updates yet. Pull to refresh later today.',
+        source: 'PulseBoard',
+        type: 'news',
+        whyItMatters: insight.whyItMatters || 'This topic has limited fresh coverage right now.',
+        detailedSummary: insight.detailedSummary,
+        keyDevelopments: insight.keyDevelopments.slice(0, 3),
+        signalCount: topicInput.signalCount,
+      };
+    }
+
+    const resolvedType: 'news' | 'video' | 'trend' = chosenType ?? 'news';
+    return {
+      interest,
+      headline: getItemTitle(chosen, resolvedType),
+      source: resolvedType === 'news' ? String(chosen?.source_id || 'News') : resolvedType === 'video' ? String(chosen?.snippet?.channelTitle || 'YouTube') : String(chosen?.author?.name || 'X'),
+      type: resolvedType,
+      whyItMatters: insight.whyItMatters || buildWhyItMatters(chosen, resolvedType),
+      detailedSummary: insight.detailedSummary,
+      keyDevelopments: insight.keyDevelopments.slice(0, 3),
+      signalCount: topicInput.signalCount,
+    };
+  }).slice(0, 12);
+
+  const doc: DailyBriefDocument = {
+    dateKey,
+    timezone: DAILY_BRIEF_TZ,
+    generatedAtIso: new Date().toISOString(),
+    executiveSummary: executive.executiveSummary,
+    overviewNarrative: executive.overviewNarrative,
+    overviewBullets: executive.overviewBullets.slice(0, 4),
+    crossTopicThemes: executive.themes.slice(0, 3),
+    watchlist,
+    topicSnapshots,
+    mustRead,
+    counts: { news: rankedNews.length, videos: rankedVideos.length, posts: rankedPosts.length },
+  };
+
+  await briefRef.set(sanitizeForFirestore(doc), { merge: true });
+  return doc;
+}
+
 // Gemini-based relevance filtering
 async function filterByRelevance(items: any[], topic: string, getTitleFn: (item: any) => string): Promise<any[]> {
   if (items.length < 5) return items; // Not worth filtering tiny sets
@@ -1783,6 +2194,64 @@ function formatSingleInterestResponse(
 }
 
 // API Routes
+app.get("/api/daily-brief", async (req, res) => {
+  try {
+    if (!firestore) return res.status(503).json({ error: "Firestore Admin not configured" });
+    const userId = (req.query.userId as string) || '';
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const now = new Date();
+    const todayKey = getDateKeyInTz(now, DAILY_BRIEF_TZ);
+    const requestedDate = (req.query.date as string) || todayKey;
+    const refresh = req.query.refresh === 'true';
+    const isToday = requestedDate === todayKey;
+
+    if (refresh && !isToday) {
+      return res.status(400).json({ error: "Refresh is only supported for today's brief" });
+    }
+
+    const briefRef = firestore.collection('users').doc(userId).collection('dailyBriefings').doc(requestedDate);
+    if (!refresh) {
+      const existing = await briefRef.get();
+      if (existing.exists) return res.json(existing.data());
+      if (!isToday) return res.status(404).json({ error: "Daily brief not found for this date" });
+    }
+
+    const generated = await buildDailyBriefForUser(userId, requestedDate, refresh);
+    res.json(generated);
+  } catch (error) {
+    console.error("Error in daily-brief:", error);
+    res.status(500).json({ error: "Failed to fetch daily brief" });
+  }
+});
+
+app.get("/api/daily-brief-history", async (req, res) => {
+  try {
+    if (!firestore) return res.status(503).json({ error: "Firestore Admin not configured" });
+    const userId = (req.query.userId as string) || '';
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const limit = Math.max(1, Math.min(30, Number(req.query.limit) || 14));
+
+    const snap = await firestore.collection('users').doc(userId).collection('dailyBriefings')
+      .orderBy('dateKey', 'desc')
+      .limit(limit)
+      .get();
+    const items = snap.docs.map((doc) => {
+      const data = doc.data() as DailyBriefDocument;
+      return {
+        dateKey: data.dateKey || doc.id,
+        generatedAtIso: data.generatedAtIso || '',
+        executiveSummary: data.executiveSummary || '',
+        topicCount: Array.isArray(data.topicSnapshots) ? data.topicSnapshots.length : 0,
+      };
+    });
+    res.json({ items });
+  } catch (error) {
+    console.error("Error in daily-brief-history:", error);
+    res.status(500).json({ error: "Failed to fetch daily brief history" });
+  }
+});
+
 app.get("/api/news", async (req, res) => {
   try {
     const rawTopic = (req.query.q as string) || "technology";
@@ -2414,6 +2883,36 @@ async function runBackgroundRefresh() {
   }
 }
 
+async function runDailyBriefScheduler() {
+  if (!firestore) return;
+  try {
+    const now = new Date();
+    const parts = getTzParts(now, DAILY_BRIEF_TZ);
+    if (parts.hour !== 6 || parts.minute > 20) return;
+
+    const dateKey = getDateKeyInTz(now, DAILY_BRIEF_TZ);
+    const runKey = `${dateKey}-06`;
+    if (lastDailyBriefSchedulerRunKey === runKey) return;
+    lastDailyBriefSchedulerRunKey = runKey;
+
+    const usersSnap = await firestore.collection('users').get();
+    const users = usersSnap.docs
+      .map((doc) => ({ id: doc.id, interests: doc.data().interests }))
+      .filter((u) => Array.isArray(u.interests) && u.interests.length > 0);
+
+    console.log(`[daily-brief-scheduler] Generating briefs for ${users.length} users (${dateKey} ${DAILY_BRIEF_TZ})`);
+    for (const user of users) {
+      try {
+        await buildDailyBriefForUser(user.id, dateKey, false);
+      } catch (e) {
+        console.error(`[daily-brief-scheduler] Failed for user ${user.id}:`, e);
+      }
+    }
+  } catch (e) {
+    console.error('[daily-brief-scheduler] Error:', e);
+  }
+}
+
 // Vite middleware for development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -2433,6 +2932,8 @@ async function startServer() {
   // Run initial cache warming after 10s startup delay, then every 3 hours
   setTimeout(() => runBackgroundRefresh(), 10_000);
   setInterval(() => runBackgroundRefresh(), 3 * 60 * 60 * 1000);
+  setTimeout(() => runDailyBriefScheduler(), 20_000);
+  setInterval(() => runDailyBriefScheduler(), 10 * 60 * 1000);
 }
 
 startServer();

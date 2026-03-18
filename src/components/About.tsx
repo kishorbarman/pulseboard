@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Compass, Sparkles, Zap, BookmarkCheck, Shield, ArrowLeft, Newspaper } from 'lucide-react';
+import { Compass, Sparkles, Zap, BookmarkCheck, Shield, ArrowLeft, Newspaper, CalendarDays } from 'lucide-react';
 
 interface AboutProps {
   onBack: () => void;
@@ -36,7 +36,8 @@ export function About({ onBack }: AboutProps) {
       <p className="text-text-secondary leading-relaxed mb-10 text-base">
         PulseBoard combines high-quality news, videos, and social posts into one feed that
         adapts to your interests and behavior. It prioritizes authoritative sources, keeps
-        content fresh with server-side caching, and helps you quickly understand what matters.
+        content fresh with server-side caching, and helps you quickly understand what matters now
+        and each morning.
       </p>
 
       {/* Features */}
@@ -57,6 +58,11 @@ export function About({ onBack }: AboutProps) {
           description="For You opens with a compact cross-feed summary, with optional per-interest drill-down and follow-up chat."
         />
         <FeatureCard
+          icon={<CalendarDays className="w-5 h-5" />}
+          title="Daily Brief"
+          description="Every morning, PulseBoard creates a structured digest with detailed topic snapshots and a cohesive overview story."
+        />
+        <FeatureCard
           icon={<BookmarkCheck className="w-5 h-5" />}
           title="Save & export"
           description="Bookmark articles for later. Export your full reading history and profile data as JSON anytime."
@@ -74,8 +80,9 @@ export function About({ onBack }: AboutProps) {
         <div className="space-y-4">
           <Step number={1} text="Pick 3–10 topics during onboarding, or add your own custom interests." />
           <Step number={2} text="Open For You to see a diversified mix of news, videos, and social posts across your interests." />
-          <Step number={3} text="Use AI Insights for a quick overall summary, then expand by interest if you want deeper context." />
-          <Step number={4} text="Save useful items, export your data anytime, and reset profile safely with confirmation when needed." />
+          <Step number={3} text="Use Daily Brief from the sidebar for a morning digest and revisit past briefs from history anytime." />
+          <Step number={4} text="Use AI Insights for a quick overall summary, then expand by interest if you want deeper context." />
+          <Step number={5} text="Save useful items, export your data anytime, and reset profile safely with confirmation when needed." />
         </div>
       </div>
 
