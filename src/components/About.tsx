@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Compass, Sparkles, Zap, BookmarkCheck, Shield, ArrowLeft } from 'lucide-react';
+import { Compass, Sparkles, Zap, BookmarkCheck, Shield, ArrowLeft, Newspaper } from 'lucide-react';
 
 interface AboutProps {
   onBack: () => void;
@@ -29,27 +29,32 @@ export function About({ onBack }: AboutProps) {
         </div>
         <div>
           <h1 className="text-3xl font-bold text-text-heading">PulseBoard</h1>
-          <p className="text-text-muted text-sm">Your personalized content hub</p>
+          <p className="text-text-muted text-sm">Your personalized multi-source feed</p>
         </div>
       </div>
 
       <p className="text-text-secondary leading-relaxed mb-10 text-base">
-        PulseBoard brings together news, videos, and trending topics into a single feed
-        that adapts to what you care about. No algorithms you can't control — just pick
-        your interests and start exploring.
+        PulseBoard combines high-quality news, videos, and social posts into one feed that
+        adapts to your interests and behavior. It prioritizes authoritative sources, keeps
+        content fresh with server-side caching, and helps you quickly understand what matters.
       </p>
 
       {/* Features */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
         <FeatureCard
+          icon={<Newspaper className="w-5 h-5" />}
+          title="Authoritative sources first"
+          description="RSS-first ingestion with curated publisher tiers, then NewsData fallback when coverage is sparse."
+        />
+        <FeatureCard
           icon={<Sparkles className="w-5 h-5" />}
-          title="AI-powered feed"
-          description="Click on content you like and PulseBoard learns your taste. The 'For You' feed gets smarter with every interaction."
+          title="Relevance + personalization ranking"
+          description="Deterministic scoring, personalization signals, and Gemini reranking combine to improve feed quality."
         />
         <FeatureCard
           icon={<Zap className="w-5 h-5" />}
-          title="Instant AI summaries"
-          description="Summarize your entire feed or any article with one tap. Ask follow-up questions to dive deeper."
+          title="Concise AI Insights"
+          description="For You opens with a compact cross-feed summary, with optional per-interest drill-down and follow-up chat."
         />
         <FeatureCard
           icon={<BookmarkCheck className="w-5 h-5" />}
@@ -68,15 +73,15 @@ export function About({ onBack }: AboutProps) {
         <h2 className="text-sm font-semibold text-text-heading uppercase tracking-wider mb-5">How to use</h2>
         <div className="space-y-4">
           <Step number={1} text="Pick 3–10 topics during onboarding, or add your own custom interests." />
-          <Step number={2} text="Browse your feed — click articles, watch videos, explore trends." />
-          <Step number={3} text='Check "For You" as your personalized feed builds over time.' />
-          <Step number={4} text="Tap the ✦ button for AI summaries, then ask follow-ups in the chat." />
+          <Step number={2} text="Open For You to see a diversified mix of news, videos, and social posts across your interests." />
+          <Step number={3} text="Use AI Insights for a quick overall summary, then expand by interest if you want deeper context." />
+          <Step number={4} text="Save useful items, export your data anytime, and reset profile safely with confirmation when needed." />
         </div>
       </div>
 
       {/* Footer */}
       <p className="text-center text-text-muted text-xs pb-8">
-        Built with React, Tailwind, Firebase & Gemini AI
+        Built with React, Tailwind, Firebase, and Gemini
       </p>
     </motion.div>
   );

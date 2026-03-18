@@ -140,6 +140,7 @@ Built from Firestore user profile + recent history:
 - `POST /api/log-interaction`
 - `GET /api/personalized-feed?userId=...`
 - `GET /api/news-metrics`
+- `GET /api/rss-source-metrics`
 - `GET /api/ranking-debug`
 
 ## 8. Data Model (Firestore)
