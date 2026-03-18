@@ -25,6 +25,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     root.classList.toggle('dark', theme === 'dark');
     localStorage.setItem(STORAGE_KEY, theme);
+
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      const cssColor = getComputedStyle(root).getPropertyValue('--th-surface-base').trim();
+      const fallback = theme === 'dark' ? '#0b1117' : '#f5f7fa';
+      const color = cssColor || fallback;
+      metaTheme.setAttribute('content', color);
+    }
   }, [theme]);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');

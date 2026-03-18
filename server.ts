@@ -67,6 +67,19 @@ interface NewsIngestionStats {
 
 const newsIngestionMetrics = new Map<string, NewsIngestionStats>();
 
+interface RssSourceMetrics {
+  runs: number;
+  curatedRuns: number;
+  totalItems: number;
+  tierAItems: number;
+  tierBItems: number;
+  tierCItems: number;
+  unknownTierItems: number;
+  lastUpdatedAt: string;
+}
+
+const rssSourceMetrics = new Map<string, RssSourceMetrics>();
+
 function logNewsIngestionMetrics(
   topic: string,
   rssItems: number,
@@ -97,6 +110,49 @@ function logNewsIngestionMetrics(
 
   console.log(
     `[NewsMetrics] context=${context} topic="${topic}" rss=${rssItems} newsdata=${newsDataItems} final=${finalItems} fallback=${usedFallback} runs=${updated.runs} cumulativeRss=${updated.rssItems} cumulativeNewsData=${updated.newsDataItems} cumulativeFinal=${updated.finalItems} cumulativeFallbackRuns=${updated.fallbackRuns}`
+  );
+}
+
+function logRssSourceMetrics(topic: string, items: any[], isCurated: boolean): void {
+  const key = topic.trim().toLowerCase();
+  const current = rssSourceMetrics.get(key) || {
+    runs: 0,
+    curatedRuns: 0,
+    totalItems: 0,
+    tierAItems: 0,
+    tierBItems: 0,
+    tierCItems: 0,
+    unknownTierItems: 0,
+    lastUpdatedAt: new Date().toISOString(),
+  };
+
+  let tierAItems = 0;
+  let tierBItems = 0;
+  let tierCItems = 0;
+  let unknownTierItems = 0;
+
+  for (const item of items) {
+    const tier = String(item?._sourceTier || '').toUpperCase();
+    if (tier === 'A') tierAItems += 1;
+    else if (tier === 'B') tierBItems += 1;
+    else if (tier === 'C') tierCItems += 1;
+    else unknownTierItems += 1;
+  }
+
+  const updated: RssSourceMetrics = {
+    runs: current.runs + 1,
+    curatedRuns: current.curatedRuns + (isCurated ? 1 : 0),
+    totalItems: current.totalItems + items.length,
+    tierAItems: current.tierAItems + tierAItems,
+    tierBItems: current.tierBItems + tierBItems,
+    tierCItems: current.tierCItems + tierCItems,
+    unknownTierItems: current.unknownTierItems + unknownTierItems,
+    lastUpdatedAt: new Date().toISOString(),
+  };
+  rssSourceMetrics.set(key, updated);
+
+  console.log(
+    `[RssSourceMetrics] topic="${topic}" curated=${isCurated} runItems=${items.length} runTierA=${tierAItems} runTierB=${tierBItems} runTierC=${tierCItems} runUnknown=${unknownTierItems} runs=${updated.runs} totalItems=${updated.totalItems}`
   );
 }
 
@@ -582,10 +638,18 @@ function getItemTimestampMs(item: any, type: ContentType): number | null {
 function getSourcePrior(item: any, type: ContentType): number {
   if (type !== 'news') return 0.55;
   const source = String(item?.source_id || '').toLowerCase();
-  const high = ['reuters', 'associated press', 'bloomberg', 'wall street journal', 'financial times', 'bbc', 'npr', 'economist'];
-  const medium = ['the verge', 'ars technica', 'techcrunch', 'wired', 'cnbc', 'marketwatch', 'yahoo'];
-  if (high.some(s => source.includes(s))) return 0.95;
-  if (medium.some(s => source.includes(s))) return 0.8;
+  const link = String(item?.link || '').toLowerCase();
+  const haystack = `${source} ${link}`;
+  const high = [
+    'reuters', 'apnews', 'associated press', 'bloomberg', 'wsj', 'wall street journal',
+    'financial times', 'ft.com', 'bbc', 'economist', 'npr', 'cisa.gov', 'who.int', 'cdc.gov', 'nih.gov',
+  ];
+  const medium = [
+    'theverge', 'the verge', 'ars technica', 'arstechnica', 'techcrunch', 'wired',
+    'cnbc', 'marketwatch', 'yahoo', 'politico', 'thehill', 'foreignpolicy', 'mit technology review', 'technologyreview',
+  ];
+  if (high.some(s => haystack.includes(s))) return 0.96;
+  if (medium.some(s => haystack.includes(s))) return 0.82;
   return 0.62;
 }
 
@@ -607,7 +671,9 @@ function computeImportanceScore(item: any, type: ContentType): number {
   const keywordBoost = highSignalWords.some(w => title.includes(w)) ? 0.12 : 0;
 
   if (type === 'news') {
-    return clamp01(0.48 + getSourcePrior(item, type) * 0.4 + keywordBoost);
+    const tier = String(item?._sourceTier || '').toUpperCase();
+    const tierBoost = tier === 'A' ? 0.12 : tier === 'B' ? 0.05 : tier === 'C' ? -0.02 : 0;
+    return clamp01(0.44 + getSourcePrior(item, type) * 0.38 + keywordBoost + tierBoost);
   }
   if (type === 'video') {
     const subs = Number(item?._subscriberCount || 0);
@@ -1212,6 +1278,8 @@ async function fetchRSSForInterest(topic: string): Promise<FetchResult<any> & { 
           source_id: sourceId,
           creator: item.creator ? [item.creator] : [],
           _ingestionSource: 'rss',
+          _sourceTier: feed.tier || 'B',
+          _sourceDomains: feed.domains || [],
         };
       }).filter((item: any) => item.title && item.link && isRecentEnough(item.pubDate));
 
@@ -1234,6 +1302,7 @@ async function fetchRSSForInterest(topic: string): Promise<FetchResult<any> & { 
       .sort((a: any, b: any) => (Date.parse(b.pubDate || '') || 0) - (Date.parse(a.pubDate || '') || 0))
   ).slice(0, RSS_MAX_ITEMS_PER_INTEREST);
   const normalizedMerged = merged.map(normalizeRssSourceId);
+  logRssSourceMetrics(topic, normalizedMerged, isCurated);
 
   console.log(`[RSS] topic="${topic}" curated=${isCurated} feeds=${selectedFeeds.length} items=${normalizedMerged.length}`);
 
@@ -2227,6 +2296,67 @@ app.get("/api/news-metrics", async (_req, res) => {
   } catch (error) {
     console.error("Error in news-metrics:", error);
     res.status(500).json({ error: "Failed to fetch news metrics" });
+  }
+});
+
+app.get("/api/rss-source-metrics", async (_req, res) => {
+  try {
+    const interests = [...rssSourceMetrics.entries()].map(([interestKey, stats]) => {
+      const total = Math.max(stats.totalItems, 1);
+      const runs = Math.max(stats.runs, 1);
+      return {
+        interestKey,
+        ...stats,
+        avgItemsPerRun: Number((stats.totalItems / runs).toFixed(2)),
+        curatedRunRate: Number((stats.curatedRuns / runs).toFixed(3)),
+        tierShare: {
+          A: Number((stats.tierAItems / total).toFixed(3)),
+          B: Number((stats.tierBItems / total).toFixed(3)),
+          C: Number((stats.tierCItems / total).toFixed(3)),
+          unknown: Number((stats.unknownTierItems / total).toFixed(3)),
+        },
+      };
+    }).sort((a, b) => b.runs - a.runs);
+
+    const totals = interests.reduce((acc, item) => {
+      acc.runs += item.runs;
+      acc.curatedRuns += item.curatedRuns;
+      acc.totalItems += item.totalItems;
+      acc.tierAItems += item.tierAItems;
+      acc.tierBItems += item.tierBItems;
+      acc.tierCItems += item.tierCItems;
+      acc.unknownTierItems += item.unknownTierItems;
+      return acc;
+    }, {
+      runs: 0,
+      curatedRuns: 0,
+      totalItems: 0,
+      tierAItems: 0,
+      tierBItems: 0,
+      tierCItems: 0,
+      unknownTierItems: 0,
+    });
+
+    const totalItems = Math.max(totals.totalItems, 1);
+    const totalRuns = Math.max(totals.runs, 1);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      totals: {
+        ...totals,
+        avgItemsPerRun: Number((totals.totalItems / totalRuns).toFixed(2)),
+        curatedRunRate: Number((totals.curatedRuns / totalRuns).toFixed(3)),
+        tierShare: {
+          A: Number((totals.tierAItems / totalItems).toFixed(3)),
+          B: Number((totals.tierBItems / totalItems).toFixed(3)),
+          C: Number((totals.tierCItems / totalItems).toFixed(3)),
+          unknown: Number((totals.unknownTierItems / totalItems).toFixed(3)),
+        },
+      },
+      interests,
+    });
+  } catch (error) {
+    console.error("Error in rss-source-metrics:", error);
+    res.status(500).json({ error: "Failed to fetch RSS source metrics" });
   }
 });
 

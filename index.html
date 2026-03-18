@@ -2,13 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
     <title>PulseBoard | Your Personalized Feed</title>
     <meta name="description" content="Your personalized dashboard for trending news, videos, and topics across the web." />
     
     <!-- PWA Meta Tags -->
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#4f46e5" />
+    <meta name="theme-color" content="#0b1117" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="apple-touch-icon" href="https://api.dicebear.com/7.x/shapes/svg?seed=PulseBoard&backgroundColor=4f46e5" />
     
     <!-- OpenGraph / Social Meta Tags -->
@@ -26,6 +28,8 @@
         var s = localStorage.getItem('pulseboard-theme');
         var d = s === 'dark' || (!s && window.matchMedia('(prefers-color-scheme: dark)').matches);
         if (d) document.documentElement.classList.add('dark');
+        var m = document.querySelector('meta[name=\"theme-color\"]');
+        if (m) m.setAttribute('content', d ? '#0b1117' : '#f5f7fa');
       })();
     </script>
   </head>
@@ -34,4 +38,3 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

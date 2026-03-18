@@ -1,6 +1,16 @@
+export type FeedTier = 'A' | 'B' | 'C';
+
 export interface RssFeedSource {
   name: string;
   url: string;
+  tier: FeedTier;
+  domains: string[];
+}
+
+interface InterestFeedDefinition {
+  query: string;
+  tier: FeedTier;
+  domains: string[];
 }
 
 const GOOGLE_NEWS_BASE = "https://news.google.com/rss/search";
@@ -14,140 +24,154 @@ function siteQuery(topic: string, sites: string[]): string {
   return `${topic} (${sites.map((s) => `site:${s}`).join(" OR ")})`;
 }
 
-const RSS_SITE_PACKS = {
-  tech: ["theverge.com", "arstechnica.com", "techcrunch.com", "wired.com"],
-  business: ["reuters.com", "bloomberg.com", "cnbc.com", "marketwatch.com"],
-  world: ["reuters.com", "apnews.com", "bbc.com", "aljazeera.com"],
-  lifestyle: ["nytimes.com", "theguardian.com", "forbes.com", "lifehacker.com"],
-  entertainment: ["variety.com", "hollywoodreporter.com", "billboard.com", "ign.com"],
+const TIERS = {
+  authorityGlobal: ["reuters.com", "apnews.com", "bbc.com"],
+  authorityBusiness: ["reuters.com", "bloomberg.com", "wsj.com", "economist.com"],
+  authorityTech: ["technologyreview.com", "arstechnica.com", "theverge.com", "wired.com"],
+  authorityHealth: ["who.int", "cdc.gov", "nih.gov", "statnews.com"],
+  authorityScience: ["nasa.gov", "esa.int", "nature.com", "sciencemag.org"],
+  specialistTech: ["techcrunch.com", "venturebeat.com", "infoq.com", "spectrum.ieee.org"],
+  specialistPolicy: ["politico.com", "thehill.com", "foreignpolicy.com", "npr.org"],
+  specialistFinance: ["cnbc.com", "marketwatch.com", "ft.com", "yahoo.com"],
+  specialistCyber: ["krebsonsecurity.com", "bleepingcomputer.com", "darkreading.com", "thehackernews.com"],
+  specialistLifestyle: ["seriouseats.com", "cntraveler.com", "lonelyplanet.com", "travelandleisure.com"],
+  specialistCulture: ["variety.com", "hollywoodreporter.com", "billboard.com", "pitchfork.com"],
+  communityTech: ["github.blog", "web.dev", "smashingmagazine.com", "dev.to"],
+  communityCreative: ["uxdesign.cc", "dezeen.com", "creativebloq.com", "petapixel.com"],
 };
 
-// Covers the built-in onboarding interests.
-const INTEREST_QUERIES: Record<string, string[]> = {
+const INTEREST_FEEDS: Record<string, InterestFeedDefinition[]> = {
   "Artificial Intelligence": [
-    siteQuery("artificial intelligence", ["technologyreview.com", "theverge.com", "arstechnica.com", "openai.com"]),
-    siteQuery("generative AI model launch", RSS_SITE_PACKS.tech),
-    "OpenAI Anthropic Google AI updates",
+    { query: siteQuery("artificial intelligence", ["technologyreview.com", "reuters.com", "theverge.com", "openai.com"]), tier: 'A', domains: ["technologyreview.com", "reuters.com", "theverge.com", "openai.com"] },
+    { query: siteQuery("AI regulation policy", [...TIERS.authorityGlobal, "ft.com"]), tier: 'A', domains: [...TIERS.authorityGlobal, "ft.com"] },
+    { query: siteQuery("generative AI product launch", TIERS.specialistTech), tier: 'B', domains: TIERS.specialistTech },
+    { query: "open source LLM benchmark updates", tier: 'C', domains: TIERS.communityTech },
   ],
   "Machine Learning": [
-    siteQuery("machine learning", ["kdnuggets.com", "towardsdatascience.com", "venturebeat.com", "ai.googleblog.com"]),
-    siteQuery("deep learning research", RSS_SITE_PACKS.tech),
+    { query: siteQuery("machine learning research", ["nature.com", "sciencemag.org", "technologyreview.com", "reuters.com"]), tier: 'A', domains: ["nature.com", "sciencemag.org", "technologyreview.com", "reuters.com"] },
+    { query: siteQuery("deep learning model release", ["arstechnica.com", "theverge.com", "venturebeat.com", "ai.googleblog.com"]), tier: 'B', domains: ["arstechnica.com", "theverge.com", "venturebeat.com", "ai.googleblog.com"] },
+    { query: siteQuery("ML engineering best practices", ["infoq.com", "github.blog", "web.dev", "dev.to"]), tier: 'C', domains: ["infoq.com", "github.blog", "web.dev", "dev.to"] },
   ],
   "Web Development": [
-    siteQuery("web development", ["web.dev", "css-tricks.com", "smashingmagazine.com", "dev.to"]),
-    "JavaScript React browser platform updates",
+    { query: siteQuery("web platform browser standards", ["web.dev", "w3.org", "developer.mozilla.org", "arstechnica.com"]), tier: 'A', domains: ["web.dev", "w3.org", "developer.mozilla.org", "arstechnica.com"] },
+    { query: siteQuery("frontend backend framework release", ["infoq.com", "smashingmagazine.com", "css-tricks.com", "theverge.com"]), tier: 'B', domains: ["infoq.com", "smashingmagazine.com", "css-tricks.com", "theverge.com"] },
+    { query: siteQuery("javascript react tutorials", ["web.dev", "smashingmagazine.com", "dev.to", "css-tricks.com"]), tier: 'C', domains: ["web.dev", "smashingmagazine.com", "dev.to", "css-tricks.com"] },
   ],
   "Cybersecurity": [
-    siteQuery("cybersecurity breach vulnerability", ["krebsonsecurity.com", "bleepingcomputer.com", "thehackernews.com", "darkreading.com"]),
-    "ransomware zero-day incident response",
+    { query: siteQuery("cybersecurity critical vulnerability", ["cisa.gov", "reuters.com", "apnews.com", "bbc.com"]), tier: 'A', domains: ["cisa.gov", "reuters.com", "apnews.com", "bbc.com"] },
+    { query: siteQuery("ransomware zero day incident", TIERS.specialistCyber), tier: 'A', domains: TIERS.specialistCyber },
+    { query: siteQuery("security analysis threat intel", ["darkreading.com", "krebsonsecurity.com", "bleepingcomputer.com", "thehackernews.com"]), tier: 'B', domains: ["darkreading.com", "krebsonsecurity.com", "bleepingcomputer.com", "thehackernews.com"] },
   ],
   "Space Exploration": [
-    siteQuery("space exploration", ["nasa.gov", "spacenews.com", "esa.int", "arstechnica.com"]),
-    "rocket launch mission space station",
+    { query: siteQuery("space mission launch", ["nasa.gov", "esa.int", "reuters.com", "apnews.com"]), tier: 'A', domains: ["nasa.gov", "esa.int", "reuters.com", "apnews.com"] },
+    { query: siteQuery("space station satellite policy", ["spacenews.com", "arstechnica.com", "bbc.com", "nature.com"]), tier: 'B', domains: ["spacenews.com", "arstechnica.com", "bbc.com", "nature.com"] },
   ],
   Robotics: [
-    siteQuery("robotics automation humanoid", ["spectrum.ieee.org", "therobotreport.com", "roboticsbusinessreview.com", "techcrunch.com"]),
-    "warehouse robot industrial automation",
+    { query: siteQuery("robotics industrial automation", ["spectrum.ieee.org", "reuters.com", "technologyreview.com", "apnews.com"]), tier: 'A', domains: ["spectrum.ieee.org", "reuters.com", "technologyreview.com", "apnews.com"] },
+    { query: siteQuery("humanoid robot deployment", ["therobotreport.com", "roboticsbusinessreview.com", "techcrunch.com", "arstechnica.com"]), tier: 'B', domains: ["therobotreport.com", "roboticsbusinessreview.com", "techcrunch.com", "arstechnica.com"] },
   ],
   "Data Science": [
-    siteQuery("data science analytics", ["kdnuggets.com", "towardsdatascience.com", "oreilly.com", "databricks.com"]),
-    "data engineering lakehouse analytics platform",
+    { query: siteQuery("data science analytics platform", ["reuters.com", "technologyreview.com", "databricks.com", "oreilly.com"]), tier: 'A', domains: ["reuters.com", "technologyreview.com", "databricks.com", "oreilly.com"] },
+    { query: siteQuery("data engineering lakehouse", ["infoq.com", "kdnuggets.com", "towardsdatascience.com", "venturebeat.com"]), tier: 'B', domains: ["infoq.com", "kdnuggets.com", "towardsdatascience.com", "venturebeat.com"] },
   ],
   Gadgets: [
-    siteQuery("gadgets smartphone wearable review", ["theverge.com", "engadget.com", "cnet.com", "arstechnica.com"]),
-    "new phone laptop device launch",
+    { query: siteQuery("new smartphone laptop launch", ["theverge.com", "arstechnica.com", "reuters.com", "cnet.com"]), tier: 'A', domains: ["theverge.com", "arstechnica.com", "reuters.com", "cnet.com"] },
+    { query: siteQuery("gadget reviews wearables", ["engadget.com", "theverge.com", "wired.com", "cnet.com"]), tier: 'B', domains: ["engadget.com", "theverge.com", "wired.com", "cnet.com"] },
   ],
   "World News": [
-    siteQuery("world news", ["reuters.com", "apnews.com", "bbc.com", "aljazeera.com"]),
-    "global diplomacy conflict elections",
+    { query: siteQuery("world news", [...TIERS.authorityGlobal, "aljazeera.com"]), tier: 'A', domains: [...TIERS.authorityGlobal, "aljazeera.com"] },
+    { query: siteQuery("global diplomacy conflict", ["reuters.com", "apnews.com", "bbc.com", "foreignpolicy.com"]), tier: 'A', domains: ["reuters.com", "apnews.com", "bbc.com", "foreignpolicy.com"] },
+    { query: siteQuery("world analysis", ["npr.org", "theguardian.com", "bbc.com", "reuters.com"]), tier: 'B', domains: ["npr.org", "theguardian.com", "bbc.com", "reuters.com"] },
   ],
   "US Politics": [
-    siteQuery("US politics congress white house", ["politico.com", "thehill.com", "npr.org", "reuters.com"]),
-    "senate house federal policy vote",
+    { query: siteQuery("US congress white house", ["reuters.com", "apnews.com", "politico.com", "thehill.com"]), tier: 'A', domains: ["reuters.com", "apnews.com", "politico.com", "thehill.com"] },
+    { query: siteQuery("federal policy regulation", ["npr.org", "wsj.com", "politico.com", "reuters.com"]), tier: 'B', domains: ["npr.org", "wsj.com", "politico.com", "reuters.com"] },
   ],
   "Global Politics": [
-    siteQuery("global politics geopolitics diplomacy", ["foreignpolicy.com", "reuters.com", "aljazeera.com", "bbc.com"]),
-    "UN NATO sanctions treaty negotiations",
+    { query: siteQuery("geopolitics diplomacy sanctions", ["reuters.com", "bbc.com", "apnews.com", "foreignpolicy.com"]), tier: 'A', domains: ["reuters.com", "bbc.com", "apnews.com", "foreignpolicy.com"] },
+    { query: siteQuery("UN NATO treaty negotiations", ["foreignpolicy.com", "npr.org", "aljazeera.com", "bbc.com"]), tier: 'B', domains: ["foreignpolicy.com", "npr.org", "aljazeera.com", "bbc.com"] },
   ],
   Economics: [
-    siteQuery("economy inflation GDP rates", ["reuters.com", "bloomberg.com", "economist.com", "wsj.com"]),
-    "central bank labor market growth forecast",
+    { query: siteQuery("inflation GDP interest rates", TIERS.authorityBusiness), tier: 'A', domains: TIERS.authorityBusiness },
+    { query: siteQuery("central bank labor market", ["reuters.com", "bloomberg.com", "wsj.com", "cnbc.com"]), tier: 'A', domains: ["reuters.com", "bloomberg.com", "wsj.com", "cnbc.com"] },
+    { query: siteQuery("economic outlook analysis", TIERS.specialistFinance), tier: 'B', domains: TIERS.specialistFinance },
   ],
   "Climate Change": [
-    siteQuery("climate change emissions renewable", ["carbonbrief.org", "climatechangenews.com", "theguardian.com", "reuters.com"]),
-    "extreme weather adaptation policy",
+    { query: siteQuery("climate policy emissions", ["reuters.com", "bbc.com", "apnews.com", "carbonbrief.org"]), tier: 'A', domains: ["reuters.com", "bbc.com", "apnews.com", "carbonbrief.org"] },
+    { query: siteQuery("renewable energy adaptation", ["carbonbrief.org", "climatechangenews.com", "theguardian.com", "nature.com"]), tier: 'B', domains: ["carbonbrief.org", "climatechangenews.com", "theguardian.com", "nature.com"] },
   ],
   Startups: [
-    siteQuery("startup funding founder", ["techcrunch.com", "ycombinator.com", "venturebeat.com", "forbes.com"]),
-    "seed round series A venture funding",
+    { query: siteQuery("startup funding series A", ["reuters.com", "wsj.com", "bloomberg.com", "techcrunch.com"]), tier: 'A', domains: ["reuters.com", "wsj.com", "bloomberg.com", "techcrunch.com"] },
+    { query: siteQuery("founder venture funding", ["techcrunch.com", "ycombinator.com", "venturebeat.com", "forbes.com"]), tier: 'B', domains: ["techcrunch.com", "ycombinator.com", "venturebeat.com", "forbes.com"] },
   ],
   Cryptocurrency: [
-    siteQuery("bitcoin ethereum crypto", ["coindesk.com", "cointelegraph.com", "theblock.co", "decrypt.co"]),
-    "crypto regulation ETF blockchain protocol",
+    { query: siteQuery("bitcoin ethereum regulation ETF", ["reuters.com", "bloomberg.com", "wsj.com", "coindesk.com"]), tier: 'A', domains: ["reuters.com", "bloomberg.com", "wsj.com", "coindesk.com"] },
+    { query: siteQuery("crypto market blockchain protocol", ["coindesk.com", "theblock.co", "cointelegraph.com", "decrypt.co"]), tier: 'B', domains: ["coindesk.com", "theblock.co", "cointelegraph.com", "decrypt.co"] },
   ],
   "Venture Capital": [
-    siteQuery("venture capital fund investment", ["techcrunch.com", "pitchbook.com", "nvca.org", "forbes.com"]),
-    "fund close LP deal flow valuation",
+    { query: siteQuery("venture capital fund close", ["reuters.com", "bloomberg.com", "wsj.com", "pitchbook.com"]), tier: 'A', domains: ["reuters.com", "bloomberg.com", "wsj.com", "pitchbook.com"] },
+    { query: siteQuery("VC deal flow valuation", ["pitchbook.com", "techcrunch.com", "nvca.org", "forbes.com"]), tier: 'B', domains: ["pitchbook.com", "techcrunch.com", "nvca.org", "forbes.com"] },
   ],
   Fintech: [
-    siteQuery("fintech digital payments", ["finextra.com", "techcrunch.com", "cnbc.com", "forbes.com"]),
-    "neobank payment rails financial infrastructure",
+    { query: siteQuery("fintech regulation digital payments", ["reuters.com", "bloomberg.com", "wsj.com", "cnbc.com"]), tier: 'A', domains: ["reuters.com", "bloomberg.com", "wsj.com", "cnbc.com"] },
+    { query: siteQuery("neobank payment rails", ["finextra.com", "techcrunch.com", "forbes.com", "cnbc.com"]), tier: 'B', domains: ["finextra.com", "techcrunch.com", "forbes.com", "cnbc.com"] },
   ],
   "Stock Market": [
-    siteQuery("stock market S&P Nasdaq", ["marketwatch.com", "cnbc.com", "reuters.com", "yahoo.com"]),
-    "earnings guidance analyst downgrade upgrade",
+    { query: siteQuery("stock market S&P Nasdaq earnings", ["reuters.com", "bloomberg.com", "wsj.com", "marketwatch.com"]), tier: 'A', domains: ["reuters.com", "bloomberg.com", "wsj.com", "marketwatch.com"] },
+    { query: siteQuery("analyst downgrade upgrade guidance", ["cnbc.com", "marketwatch.com", "yahoo.com", "reuters.com"]), tier: 'B', domains: ["cnbc.com", "marketwatch.com", "yahoo.com", "reuters.com"] },
   ],
   Cooking: [
-    siteQuery("cooking recipe chef", ["seriouseats.com", "bonappetit.com", "food52.com", "nytimes.com"]),
-    "quick dinner recipe seasonal food",
+    { query: siteQuery("cooking chef recipe", ["seriouseats.com", "nytimes.com", "bonappetit.com", "food52.com"]), tier: 'A', domains: ["seriouseats.com", "nytimes.com", "bonappetit.com", "food52.com"] },
+    { query: siteQuery("seasonal recipe meal planning", ["seriouseats.com", "bonappetit.com", "food52.com", "theguardian.com"]), tier: 'B', domains: ["seriouseats.com", "bonappetit.com", "food52.com", "theguardian.com"] },
   ],
   "Fitness & Health": [
-    siteQuery("fitness health nutrition", ["healthline.com", "verywellfit.com", "who.int", "nytimes.com"]),
-    "exercise training recovery wellness",
+    { query: siteQuery("public health guidelines fitness", [...TIERS.authorityHealth]), tier: 'A', domains: [...TIERS.authorityHealth] },
+    { query: siteQuery("exercise nutrition recovery", ["nytimes.com", "statnews.com", "who.int", "healthline.com"]), tier: 'B', domains: ["nytimes.com", "statnews.com", "who.int", "healthline.com"] },
   ],
   Travel: [
-    siteQuery("travel destination guide", ["lonelyplanet.com", "cntraveler.com", "travelandleisure.com", "thepointsguy.com"]),
-    "flight hotel tourism destination alerts",
+    { query: siteQuery("travel advisories airline disruptions", ["reuters.com", "bbc.com", "apnews.com", "thepointsguy.com"]), tier: 'A', domains: ["reuters.com", "bbc.com", "apnews.com", "thepointsguy.com"] },
+    { query: siteQuery("destination guide tourism", ["lonelyplanet.com", "cntraveler.com", "travelandleisure.com", "thepointsguy.com"]), tier: 'B', domains: ["lonelyplanet.com", "cntraveler.com", "travelandleisure.com", "thepointsguy.com"] },
   ],
   Fashion: [
-    siteQuery("fashion runway style", ["vogue.com", "fashionista.com", "businessoffashion.com", "wwd.com"]),
-    "designer collection trend report",
+    { query: siteQuery("fashion industry earnings runway", ["businessoffashion.com", "wwd.com", "reuters.com", "vogue.com"]), tier: 'A', domains: ["businessoffashion.com", "wwd.com", "reuters.com", "vogue.com"] },
+    { query: siteQuery("fashion trend report", ["vogue.com", "fashionista.com", "wwd.com", "businessoffashion.com"]), tier: 'B', domains: ["vogue.com", "fashionista.com", "wwd.com", "businessoffashion.com"] },
   ],
   Photography: [
-    siteQuery("photography camera editing", ["petapixel.com", "fstoppers.com", "dpreview.com", "digitalcameraworld.com"]),
-    "camera lens review photo editing workflow",
+    { query: siteQuery("camera industry launch", ["reuters.com", "dpreview.com", "petapixel.com", "digitalcameraworld.com"]), tier: 'A', domains: ["reuters.com", "dpreview.com", "petapixel.com", "digitalcameraworld.com"] },
+    { query: siteQuery("photography editing workflow", ["petapixel.com", "fstoppers.com", "dpreview.com", "digitalcameraworld.com"]), tier: 'B', domains: ["petapixel.com", "fstoppers.com", "dpreview.com", "digitalcameraworld.com"] },
   ],
   Gaming: [
-    siteQuery("gaming video game", ["ign.com", "polygon.com", "gamesradar.com", "kotaku.com"]),
-    "game release esports patch notes",
+    { query: siteQuery("gaming industry release earnings", ["reuters.com", "ign.com", "polygon.com", "gamesradar.com"]), tier: 'A', domains: ["reuters.com", "ign.com", "polygon.com", "gamesradar.com"] },
+    { query: siteQuery("game patch esports", ["ign.com", "polygon.com", "gamesradar.com", "kotaku.com"]), tier: 'B', domains: ["ign.com", "polygon.com", "gamesradar.com", "kotaku.com"] },
   ],
   "Movies & TV": [
-    siteQuery("movies TV streaming", ["variety.com", "hollywoodreporter.com", "deadline.com", "indiewire.com"]),
-    "box office trailer casting",
+    { query: siteQuery("streaming box office", ["variety.com", "hollywoodreporter.com", "deadline.com", "reuters.com"]), tier: 'A', domains: ["variety.com", "hollywoodreporter.com", "deadline.com", "reuters.com"] },
+    { query: siteQuery("movie trailer casting", ["variety.com", "hollywoodreporter.com", "indiewire.com", "deadline.com"]), tier: 'B', domains: ["variety.com", "hollywoodreporter.com", "indiewire.com", "deadline.com"] },
   ],
   Music: [
-    siteQuery("music album artist", ["billboard.com", "pitchfork.com", "rollingstone.com", "nme.com"]),
-    "tour release chart performance",
+    { query: siteQuery("music charts industry", ["billboard.com", "reuters.com", "rollingstone.com", "pitchfork.com"]), tier: 'A', domains: ["billboard.com", "reuters.com", "rollingstone.com", "pitchfork.com"] },
+    { query: siteQuery("album release tour", ["billboard.com", "pitchfork.com", "rollingstone.com", "nme.com"]), tier: 'B', domains: ["billboard.com", "pitchfork.com", "rollingstone.com", "nme.com"] },
   ],
   Sports: [
-    siteQuery("sports football basketball soccer", ["espn.com", "bbc.com", "skysports.com", "reuters.com"]),
-    "playoff championship transfer",
+    { query: siteQuery("sports major league updates", ["reuters.com", "apnews.com", "espn.com", "bbc.com"]), tier: 'A', domains: ["reuters.com", "apnews.com", "espn.com", "bbc.com"] },
+    { query: siteQuery("playoff championship transfer", ["espn.com", "skysports.com", "bbc.com", "reuters.com"]), tier: 'B', domains: ["espn.com", "skysports.com", "bbc.com", "reuters.com"] },
   ],
   "Books & Literature": [
-    siteQuery("books literature authors", ["bookriot.com", "lithub.com", "parisreview.org", "nytimes.com"]),
-    "book release prize literary review",
+    { query: siteQuery("book release literary prize", ["nytimes.com", "theguardian.com", "lithub.com", "parisreview.org"]), tier: 'A', domains: ["nytimes.com", "theguardian.com", "lithub.com", "parisreview.org"] },
+    { query: siteQuery("author interview review", ["lithub.com", "bookriot.com", "parisreview.org", "nytimes.com"]), tier: 'B', domains: ["lithub.com", "bookriot.com", "parisreview.org", "nytimes.com"] },
   ],
   Design: [
-    siteQuery("design UI UX", ["creativebloq.com", "smashingmagazine.com", "uxdesign.cc", "dezeen.com"]),
-    "product design accessibility interaction",
+    { query: siteQuery("design industry product design", ["dezeen.com", "smashingmagazine.com", "reuters.com", "creativebloq.com"]), tier: 'A', domains: ["dezeen.com", "smashingmagazine.com", "reuters.com", "creativebloq.com"] },
+    { query: siteQuery("UX accessibility interaction", ["smashingmagazine.com", "uxdesign.cc", "creativebloq.com", "dezeen.com"]), tier: 'B', domains: ["smashingmagazine.com", "uxdesign.cc", "creativebloq.com", "dezeen.com"] },
   ],
   "Open Source": [
-    siteQuery("open source GitHub", ["github.blog", "lwn.net", "opensource.com", "infoq.com"]),
-    "maintainer release security patch",
+    { query: siteQuery("open source security patch", ["reuters.com", "lwn.net", "github.blog", "infoq.com"]), tier: 'A', domains: ["reuters.com", "lwn.net", "github.blog", "infoq.com"] },
+    { query: siteQuery("maintainer release changelog", ["github.blog", "lwn.net", "opensource.com", "infoq.com"]), tier: 'B', domains: ["github.blog", "lwn.net", "opensource.com", "infoq.com"] },
   ],
   Productivity: [
-    siteQuery("productivity workflow time management", ["zapier.com", "todoist.com", "lifehacker.com", "notion.com"]),
-    "focus habits automation remote work",
+    { query: siteQuery("workplace productivity research", ["hbr.org", "nytimes.com", "theguardian.com", "reuters.com"]), tier: 'A', domains: ["hbr.org", "nytimes.com", "theguardian.com", "reuters.com"] },
+    { query: siteQuery("workflow automation tools", ["zapier.com", "notion.com", "todoist.com", "lifehacker.com"]), tier: 'B', domains: ["zapier.com", "notion.com", "todoist.com", "lifehacker.com"] },
+    { query: siteQuery("productivity habits", ["lifehacker.com", "todoist.com", "zapier.com", "notion.com"]), tier: 'C', domains: ["lifehacker.com", "todoist.com", "zapier.com", "notion.com"] },
   ],
 };
 
@@ -155,33 +179,42 @@ function normalizeInterestKey(interest: string): string {
   return interest.trim().toLowerCase();
 }
 
-const NORMALIZED_INTEREST_QUERIES = new Map<string, string[]>(
-  Object.entries(INTEREST_QUERIES).map(([key, queries]) => [normalizeInterestKey(key), queries])
+const NORMALIZED_INTEREST_FEEDS = new Map<string, InterestFeedDefinition[]>(
+  Object.entries(INTEREST_FEEDS).map(([key, feeds]) => [normalizeInterestKey(key), feeds])
 );
 
-function fallbackQueriesForInterest(interest: string): string[] {
+function fallbackFeedsForInterest(interest: string): InterestFeedDefinition[] {
   return [
-    `${interest} latest news`,
-    `${interest} analysis`,
-    siteQuery(interest, [...RSS_SITE_PACKS.world, ...RSS_SITE_PACKS.tech]),
+    { query: siteQuery(`${interest} latest`, [...TIERS.authorityGlobal, "reuters.com"]), tier: 'A', domains: [...TIERS.authorityGlobal, "reuters.com"] },
+    { query: siteQuery(`${interest} analysis`, ["wsj.com", "bloomberg.com", "ft.com", "bbc.com"]), tier: 'A', domains: ["wsj.com", "bloomberg.com", "ft.com", "bbc.com"] },
+    { query: siteQuery(`${interest} updates`, ["theverge.com", "techcrunch.com", "theguardian.com", "npr.org"]), tier: 'B', domains: ["theverge.com", "techcrunch.com", "theguardian.com", "npr.org"] },
   ];
+}
+
+function tierRank(tier: FeedTier): number {
+  if (tier === 'A') return 0;
+  if (tier === 'B') return 1;
+  return 2;
 }
 
 export function getRssFeedsForInterest(interest: string): { feeds: RssFeedSource[]; isCurated: boolean } {
   const normalized = normalizeInterestKey(interest);
-  const curatedQueries = NORMALIZED_INTEREST_QUERIES.get(normalized);
-  const isCurated = Array.isArray(curatedQueries) && curatedQueries.length > 0;
-  const queries = isCurated ? curatedQueries : fallbackQueriesForInterest(interest);
+  const curatedFeeds = NORMALIZED_INTEREST_FEEDS.get(normalized);
+  const isCurated = Array.isArray(curatedFeeds) && curatedFeeds.length > 0;
+  const defs = isCurated ? curatedFeeds : fallbackFeedsForInterest(interest);
 
+  const ordered = [...defs].sort((a, b) => tierRank(a.tier) - tierRank(b.tier));
   return {
-    feeds: queries.map((query, index) => ({
-      name: isCurated ? `${interest} curated ${index + 1}` : `${interest} fallback ${index + 1}`,
-      url: googleNewsUrl(query),
+    feeds: ordered.map((def, index) => ({
+      name: isCurated ? `${interest} tier-${def.tier} ${index + 1}` : `${interest} fallback tier-${def.tier} ${index + 1}`,
+      url: googleNewsUrl(def.query),
+      tier: def.tier,
+      domains: def.domains,
     })),
     isCurated,
   };
 }
 
 export function getRssInterestCoverage(): string[] {
-  return Object.keys(INTEREST_QUERIES);
+  return Object.keys(INTEREST_FEEDS);
 }

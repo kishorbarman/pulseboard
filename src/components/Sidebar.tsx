@@ -22,6 +22,10 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
 
   const handleReset = async () => {
     if (!user?.uid) return;
+    const confirmed = window.confirm(
+      "Reset your profile and personalization history? This will clear your interests, saved feed learning, and related data for this account."
+    );
+    if (!confirmed) return;
     setIsResetting(true);
     await resetProfile(user.uid);
     setIsResetting(false);

@@ -5,7 +5,7 @@ import { VideoCard } from './VideoCard';
 import { TrendCard } from './TrendCard';
 import { VideoModal } from './VideoModal';
 import { logClickHistory, subscribeToBookmarks, toggleBookmark } from '../lib/firebase';
-import { AlertCircle, Search, Menu, X, RefreshCw } from 'lucide-react';
+import { AlertCircle, Search, Menu, X, RefreshCw, ArrowUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MeshGradient } from './MeshGradient';
 import { AIPulse } from './AIPulse';
@@ -66,6 +66,8 @@ function dedupeItems<T>(items: T[], getTitle: (item: T) => string, getUrl: (item
 }
 
 export function Dashboard({ user, userData }: DashboardProps) {
+  const mainRef = React.useRef<HTMLElement | null>(null);
+  const lastScrollYRef = React.useRef(0);
   const [activeInterest, setActiveInterest] = useState<string>('For You');
   const [searchQuery, setSearchQuery] = useState('');
   const [loadMultiplier, setLoadMultiplier] = useState(1);
@@ -80,6 +82,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
   const [trendContext, setTrendContext] = useState<string>('');
   const [interestSummaries, setInterestSummaries] = useState<Record<string, string>>({});
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
   
   // Initialize sidebar state based on window width
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -111,6 +114,44 @@ export function Dashboard({ user, userData }: DashboardProps) {
   useEffect(() => {
     document.title = `${activeInterest} | PulseBoard`;
   }, [activeInterest]);
+
+  const updateScrollToTopVisibility = useCallback((currentY: number) => {
+    const lastY = lastScrollYRef.current;
+    const scrollingUp = currentY < lastY - 3;
+    const scrollingDown = currentY > lastY + 3;
+
+    if (currentY < 120) {
+      setShowScrollToTop(false);
+    } else if (scrollingUp && currentY > 220) {
+      setShowScrollToTop(true);
+    } else if (scrollingDown) {
+      setShowScrollToTop(false);
+    }
+
+    lastScrollYRef.current = currentY;
+  }, []);
+
+  useEffect(() => {
+    const handleWindowScroll = () => {
+      if (window.innerWidth >= 768) return;
+      updateScrollToTopVisibility(window.scrollY || 0);
+    };
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, [updateScrollToTopVisibility]);
+
+  const handleMainScroll = (e: React.UIEvent<HTMLElement>) => {
+    if (window.innerWidth < 768) return;
+    updateScrollToTopVisibility((e.currentTarget as HTMLElement).scrollTop || 0);
+  };
+
+  const scrollToTop = () => {
+    if (window.innerWidth >= 768) {
+      mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     if (forceRefresh || loadMultiplier > 1) {
@@ -324,8 +365,12 @@ export function Dashboard({ user, userData }: DashboardProps) {
         onClose={() => setIsSidebarOpen(false)}
       />
 
-      <div className="flex-1 flex flex-col h-screen overflow-hidden relative z-10">
-        <main className="flex-1 overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full mobile-hide-scrollbar">
+      <div className="flex-1 flex flex-col md:h-screen md:overflow-hidden relative z-10">
+        <main
+          ref={mainRef}
+          onScroll={handleMainScroll}
+          className="flex-1 md:overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full mobile-hide-scrollbar"
+        >
           {activeInterest === 'About' ? (
             <About onBack={() => changeInterest('For You')} />
           ) : (
@@ -487,6 +532,34 @@ export function Dashboard({ user, userData }: DashboardProps) {
         onClose={() => setIsModalOpen(false)} 
         videoId={activeVideoId} 
       />
+
+      {!isSidebarOpen && (
+        <button
+          type="button"
+          aria-label="Open menu"
+          onClick={() => setIsSidebarOpen(true)}
+          className="md:hidden fixed bottom-5 left-4 z-40 w-11 h-11 rounded-full bg-surface-primary/90 backdrop-blur-md border border-border-primary text-text-primary shadow-lg flex items-center justify-center"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+      )}
+
+      <AnimatePresence>
+        {showScrollToTop && (
+          <motion.button
+            type="button"
+            aria-label="Scroll to top"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            onClick={scrollToTop}
+            className="fixed bottom-24 right-4 md:bottom-6 md:right-24 z-40 w-10 h-10 rounded-full bg-surface-primary/80 backdrop-blur-md border border-border-primary text-text-secondary hover:text-text-primary transition-colors shadow-md flex items-center justify-center"
+          >
+            <ArrowUp className="w-4 h-4" />
+          </motion.button>
+        )}
+      </AnimatePresence>
+
       <AIPulse
         news={news}
         videos={videos}
