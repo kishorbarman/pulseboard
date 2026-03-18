@@ -103,8 +103,8 @@ export function DailyBrief({ userId }: DailyBriefProps) {
       setLoading(true);
       setError(null);
       try {
-        const items = await loadHistory();
-        const initialDate = items[0]?.dateKey || getTodayDateKey();
+        await loadHistory();
+        const initialDate = getTodayDateKey();
         if (!cancelled) {
           setSelectedDate(initialDate);
           await loadBrief(initialDate, false);

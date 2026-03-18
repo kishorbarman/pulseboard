@@ -2524,6 +2524,8 @@ app.get("/api/smart-feed", async (req, res) => {
 
 app.get("/api/smart-feed-foryou", async (req, res) => {
   try {
+    void runDailyBriefScheduler();
+
     const interestsParam = (req.query.interests as string) || '';
     const interests = interestsParam.split(',').map(i => i.trim()).filter(Boolean).slice(0, 10);
     if (interests.length === 0) {
@@ -2888,10 +2890,12 @@ async function runDailyBriefScheduler() {
   try {
     const now = new Date();
     const parts = getTzParts(now, DAILY_BRIEF_TZ);
-    if (parts.hour !== 6 || parts.minute > 20) return;
+    // Generate once any time after 6:00 AM local brief timezone.
+    // This makes the scheduler resilient when Cloud Run cold-starts after 6 AM.
+    if (parts.hour < 6) return;
 
     const dateKey = getDateKeyInTz(now, DAILY_BRIEF_TZ);
-    const runKey = `${dateKey}-06`;
+    const runKey = dateKey;
     if (lastDailyBriefSchedulerRunKey === runKey) return;
     lastDailyBriefSchedulerRunKey = runKey;
 
