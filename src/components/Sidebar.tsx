@@ -145,9 +145,9 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
               <p className="text-xs text-text-muted truncate">{user?.email}</p>
             </div>
             {isProfileOpen ? (
-              <ChevronUp className="w-4 h-4 text-text-muted shrink-0" />
-            ) : (
               <ChevronDown className="w-4 h-4 text-text-muted shrink-0" />
+            ) : (
+              <ChevronUp className="w-4 h-4 text-text-muted shrink-0" />
             )}
           </button>
 

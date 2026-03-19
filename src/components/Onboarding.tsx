@@ -6,32 +6,66 @@ import { useTheme } from '../lib/theme';
 import { Loader2, Sparkles, Plus, X } from 'lucide-react';
 
 const AVAILABLE_INTERESTS = [
-  // Tech & Science
-  "Artificial Intelligence", "Machine Learning", "Web Development", "Cybersecurity",
-  "Space Exploration", "Robotics", "Data Science", "Gadgets",
-  // News & Politics
-  "World News", "US Politics", "Global Politics", "Economics", "Climate Change",
-  // Business & Finance
-  "Startups", "Cryptocurrency", "Venture Capital", "Fintech", "Stock Market",
-  // Lifestyle
-  "Cooking", "Fitness & Health", "Travel", "Fashion", "Photography",
-  // Entertainment
-  "Gaming", "Movies & TV", "Music", "Sports", "Books & Literature",
-  // Creative
-  "Design", "Open Source", "Productivity"
+  "Artificial Intelligence",
+  "Cybersecurity",
+  "Software Development",
+  "Gadgets & Consumer Tech",
+  "Space & Science",
+  "Robotics",
+  "World News",
+  "US Politics",
+  "Global Affairs",
+  "Climate & Energy",
+  "Economy",
+  "Markets & Investing",
+  "Startups & Business",
+  "Personal Finance",
+  "Crypto & Web3",
+  "Health & Wellness",
+  "Fitness",
+  "Food & Cooking",
+  "Travel",
+  "Fashion & Style",
+  "Photography",
+  "Gaming",
+  "Movies & TV",
+  "Music",
+  "Sports",
+  "Books",
+  "Design",
+  "Productivity",
+  "Education & Learning",
+  "Careers & Work"
 ];
 
 const MIN_TOPICS = 3;
 const MAX_TOPICS = 10;
 
+function shuffleTopics(topics: string[]): string[] {
+  const items = [...topics];
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+
 export function Onboarding({ user }: { user: any }) {
+  const [shuffledDefaultTopics] = useState<string[]>(() => shuffleTopics(AVAILABLE_INTERESTS));
   const [selected, setSelected] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [customTopic, setCustomTopic] = useState('');
   const [customTopics, setCustomTopics] = useState<string[]>([]);
   const { theme } = useTheme();
 
-  const allTopics = [...AVAILABLE_INTERESTS, ...customTopics];
+  const allTopics = [...shuffledDefaultTopics, ...customTopics];
+  const normalizedCustomTopic = customTopic.trim().toLowerCase();
+  const matchingTopics = normalizedCustomTopic
+    ? allTopics.filter((t) => t.toLowerCase().includes(normalizedCustomTopic))
+    : [];
+  const hasExactExistingMatch = normalizedCustomTopic
+    ? allTopics.some((t) => t.toLowerCase() === normalizedCustomTopic)
+    : false;
 
   const toggleInterest = (interest: string) => {
     if (selected.includes(interest)) {
@@ -112,9 +146,6 @@ export function Onboarding({ user }: { user: any }) {
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--th-accent-soft)] border border-[var(--th-accent-border)] mb-8">
           <Sparkles className="w-8 h-8 text-[var(--th-accent-text)]" />
         </div>
-        <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 text-text-heading">
-          What are you into?
-        </h1>
         <p className="text-lg text-text-tertiary mb-10 max-w-xl mx-auto">
           Select {MIN_TOPICS}–{MAX_TOPICS} topics to personalize your PulseBoard feed. You can also add your own.
         </p>
@@ -131,9 +162,21 @@ export function Onboarding({ user }: { user: any }) {
                 whileTap={{ scale: 0.95 }}
                 animate={{
                   scale: isSelected ? 1.05 : 1,
-                  backgroundColor: isSelected ? 'var(--th-accent)' : unselectedBg,
-                  borderColor: isSelected ? 'var(--th-accent-strong)' : unselectedBorder,
-                  color: isSelected ? '#ffffff' : unselectedText
+                  backgroundColor: isSelected
+                    ? 'var(--th-accent)'
+                    : matchingTopics.includes(interest)
+                      ? 'var(--th-accent-soft)'
+                      : unselectedBg,
+                  borderColor: isSelected
+                    ? 'var(--th-accent-strong)'
+                    : matchingTopics.includes(interest)
+                      ? 'var(--th-accent-border)'
+                      : unselectedBorder,
+                  color: isSelected
+                    ? '#ffffff'
+                    : matchingTopics.includes(interest)
+                      ? 'var(--th-accent-text)'
+                      : unselectedText
                 }}
                 className="px-5 py-3 rounded-full border text-sm md:text-base font-medium transition-colors backdrop-blur-sm shadow-lg flex items-center gap-2"
               >
@@ -153,7 +196,7 @@ export function Onboarding({ user }: { user: any }) {
             value={customTopic}
             onChange={e => setCustomTopic(e.target.value)}
             onKeyDown={handleCustomKeyDown}
-            placeholder="Add a custom topic..."
+            placeholder="Search topics or add a custom one..."
             maxLength={30}
             className="flex-1 bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 px-5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-[var(--th-focus-ring)] transition-all shadow-lg"
           />
@@ -161,7 +204,7 @@ export function Onboarding({ user }: { user: any }) {
             onClick={addCustomTopic}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            disabled={!customTopic.trim() || selected.length >= MAX_TOPICS}
+            disabled={!customTopic.trim() || selected.length >= MAX_TOPICS || hasExactExistingMatch}
             className="p-3 rounded-full bg-[var(--th-accent)] text-white disabled:opacity-30 hover:bg-[var(--th-accent-strong)] transition-colors shadow-lg shrink-0"
           >
             <Plus className="w-5 h-5" />
@@ -175,11 +218,11 @@ export function Onboarding({ user }: { user: any }) {
           whileTap={canSave ? { scale: 0.98 } : {}}
           className={`px-8 py-4 rounded-xl font-bold text-lg flex items-center justify-center mx-auto min-w-[200px] transition-all ${
             canSave
-              ? 'bg-white text-stone-900 hover:bg-stone-100 shadow-[0_0_30px_-5px_rgba(255,255,255,0.3)]'
+              ? 'bg-[var(--th-accent)] text-[var(--th-accent-text)] border border-[var(--th-accent-strong)] hover:bg-[var(--th-accent-strong)] shadow-[0_0_30px_-8px_var(--th-accent-soft)]'
               : 'bg-surface-secondary text-text-muted cursor-not-allowed'
           }`}
         >
-          {saving ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Explore'}
+          {saving ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Dive into your PulseBoard'}
         </motion.button>
         <p className="text-text-muted text-sm mt-6 font-medium">
           {selected.length}/{MAX_TOPICS} selected{selected.length < MIN_TOPICS ? ` (min ${MIN_TOPICS})` : ''}
