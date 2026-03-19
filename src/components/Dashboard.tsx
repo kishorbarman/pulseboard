@@ -66,6 +66,52 @@ function dedupeItems<T>(items: T[], getTitle: (item: T) => string, getUrl: (item
   });
 }
 
+function getFeedCacheKey(userId: string, interest: string, loadMultiplier: number) {
+  return `pulseboard:feed:${userId}:${interest}:${loadMultiplier}`;
+}
+
+function readCachedFeed(userId: string, interest: string, loadMultiplier: number) {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(getFeedCacheKey(userId, interest, loadMultiplier));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as {
+      news: any[];
+      videos: any[];
+      trends: any[];
+      hasMoreContent: boolean;
+      trendContext: string;
+      interestSummaries: Record<string, string>;
+      sourceWarnings: string[];
+      cachedAt: number;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedFeed(userId: string, interest: string, loadMultiplier: number, payload: {
+  news: any[];
+  videos: any[];
+  trends: any[];
+  hasMoreContent: boolean;
+  trendContext: string;
+  interestSummaries: Record<string, string>;
+  sourceWarnings: string[];
+}) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      getFeedCacheKey(userId, interest, loadMultiplier),
+      JSON.stringify({ ...payload, cachedAt: Date.now() })
+    );
+  } catch {
+    // no-op
+  }
+}
+
 export function Dashboard({ user, userData }: DashboardProps) {
   const mainRef = React.useRef<HTMLElement | null>(null);
   const lastScrollYRef = React.useRef(0);
@@ -166,19 +212,38 @@ export function Dashboard({ user, userData }: DashboardProps) {
       return;
     }
 
-    if (forceRefresh || loadMultiplier > 1) {
+    const canUseCachedFeed = !forceRefresh && loadMultiplier === 1 && activeInterest !== 'Saved';
+    const cachedFeed = canUseCachedFeed ? readCachedFeed(user.uid, activeInterest, loadMultiplier) : null;
+
+    if (cachedFeed) {
+      setNews(cachedFeed.news || []);
+      setVideos(cachedFeed.videos || []);
+      setTrends(cachedFeed.trends || []);
+      setHasMoreContent(Boolean(cachedFeed.hasMoreContent));
+      setTrendContext(cachedFeed.trendContext || '');
+      setInterestSummaries(cachedFeed.interestSummaries || {});
+      setSourceWarnings(cachedFeed.sourceWarnings || []);
+      setLoading(false);
+      setRefreshing(true);
+    } else if (forceRefresh || loadMultiplier > 1) {
       setRefreshing(true);
     } else {
       setLoading(true);
     }
     setError(null);
-    setSourceWarnings([]);
-    setTrendContext('');
-    setInterestSummaries({});
+    if (!cachedFeed) {
+      setSourceWarnings([]);
+      setTrendContext('');
+      setInterestSummaries({});
+    }
     try {
       let fetchedNews: any[] = [];
       let fetchedVideos: any[] = [];
       let fetchedTrends: any[] = [];
+      let nextHasMoreContent = false;
+      let nextTrendContext = '';
+      let nextInterestSummaries: Record<string, string> = {};
+      let nextSourceWarnings: string[] = [];
 
       // Helper to parse smart-feed response into content arrays
       const parseSmartFeed = (data: any) => ({
@@ -198,7 +263,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
         fetchedNews = bookmarks.filter(b => b.type === 'news').map(b => b.item);
         fetchedVideos = bookmarks.filter(b => b.type === 'video').map(b => b.item);
         fetchedTrends = bookmarks.filter(b => b.type === 'trend').map(b => b.item);
-        setHasMoreContent(false);
+        nextHasMoreContent = false;
       } else if (activeInterest === 'For You') {
         // Fetch personalized feed + smart content covering all interests
         const [personalizedRes, smartRes] = await Promise.all([
@@ -210,11 +275,10 @@ export function Dashboard({ user, userData }: DashboardProps) {
         const pItems = personalizedData.items || [];
         const smartData = await smartRes.json().catch(() => ({}));
         const smart = parseSmartFeed(smartData);
-        setHasMoreContent(Boolean(smart.pagination?.hasMore) && loadMultiplier < (smart.pagination?.maxLoadMultiplier || maxLoadMultiplier));
-
-        if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
-        setTrendContext(smart.trendContext);
-        setInterestSummaries(smart.interestSummaries || {});
+        nextHasMoreContent = Boolean(smart.pagination?.hasMore) && loadMultiplier < (smart.pagination?.maxLoadMultiplier || maxLoadMultiplier);
+        nextSourceWarnings = smart.warnings.length > 0 ? smart.warnings : [];
+        nextTrendContext = smart.trendContext || '';
+        nextInterestSummaries = smart.interestSummaries || {};
 
         // Separate personalized items by type
         const pNews = pItems.filter((i: any) => i.type === 'news').map((i: any) => ({ ...i.originalData, firestoreId: i.firestoreId, sentiment: i.sentiment }));
@@ -248,10 +312,10 @@ export function Dashboard({ user, userData }: DashboardProps) {
         }
 
         const smart = parseSmartFeed(smartData);
-        setHasMoreContent(Boolean(smart.pagination?.hasMore) && loadMultiplier < (smart.pagination?.maxLoadMultiplier || maxLoadMultiplier));
-        if (smart.warnings.length > 0) setSourceWarnings(smart.warnings);
-        setTrendContext(smart.trendContext);
-        setInterestSummaries({});
+        nextHasMoreContent = Boolean(smart.pagination?.hasMore) && loadMultiplier < (smart.pagination?.maxLoadMultiplier || maxLoadMultiplier);
+        nextSourceWarnings = smart.warnings.length > 0 ? smart.warnings : [];
+        nextTrendContext = smart.trendContext || '';
+        nextInterestSummaries = {};
 
         fetchedNews = dedupeItems(
           smart.news,
@@ -277,6 +341,22 @@ export function Dashboard({ user, userData }: DashboardProps) {
       setNews(fetchedNews);
       setVideos(fetchedVideos);
       setTrends(fetchedTrends);
+      setHasMoreContent(nextHasMoreContent);
+      setTrendContext(nextTrendContext);
+      setInterestSummaries(nextInterestSummaries);
+      setSourceWarnings(nextSourceWarnings);
+
+      if (activeInterest !== 'Saved' && loadMultiplier === 1) {
+        writeCachedFeed(user.uid, activeInterest, loadMultiplier, {
+          news: fetchedNews,
+          videos: fetchedVideos,
+          trends: fetchedTrends,
+          hasMoreContent: nextHasMoreContent,
+          trendContext: nextTrendContext,
+          interestSummaries: nextInterestSummaries,
+          sourceWarnings: nextSourceWarnings,
+        });
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'An error occurred while fetching data.');
