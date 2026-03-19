@@ -213,7 +213,7 @@ export default function App() {
               />
               <LandingFeatureCard
                 icon={<CalendarDays className="w-5 h-5" />}
-                title="Daily Brief"
+                title="Morning Digest"
                 description="Each morning, get topic snapshots and one cohesive story across your interests."
               />
               <LandingFeatureCard
@@ -234,7 +234,7 @@ export default function App() {
                 <LandingStep number={1} text="Pick your interests and optional custom topics." />
                 <LandingStep number={2} text="Open For You for a diversified mix of news, videos, and social signals." />
                 <LandingStep number={3} text="Use AI summaries on cards and the feed-level overview to scan fast." />
-                <LandingStep number={4} text="Check Daily Brief each morning and revisit past briefs anytime." />
+                <LandingStep number={4} text="Check Morning Digest each morning and revisit past briefs anytime." />
               </div>
             </div>
 

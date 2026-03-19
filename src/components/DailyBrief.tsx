@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CalendarDays, RefreshCw, Newspaper, PlayCircle, MessageSquare, ExternalLink } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { AlertCircle, CalendarDays, Newspaper, PlayCircle, MessageSquare, Layers3, Radar, ListChecks } from 'lucide-react';
 
 interface DailyBriefProps {
   userId: string;
@@ -71,12 +70,18 @@ function TypeIcon({ type }: { type: 'news' | 'video' | 'trend' }) {
   return <Newspaper className="w-4 h-4" />;
 }
 
+function formatGeneratedAt(iso?: string) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 export function DailyBrief({ userId }: DailyBriefProps) {
   const [history, setHistory] = useState<BriefHistoryItem[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(getTodayDateKey());
   const [brief, setBrief] = useState<DailyBriefDocument | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadHistory = useCallback(async () => {
@@ -88,9 +93,8 @@ export function DailyBrief({ userId }: DailyBriefProps) {
     return items as BriefHistoryItem[];
   }, [userId]);
 
-  const loadBrief = useCallback(async (dateKey: string, refresh = false) => {
-    const refreshParam = refresh ? '&refresh=true' : '';
-    const res = await fetch(`/api/daily-brief?userId=${encodeURIComponent(userId)}&date=${encodeURIComponent(dateKey)}${refreshParam}`);
+  const loadBrief = useCallback(async (dateKey: string) => {
+    const res = await fetch(`/api/daily-brief?userId=${encodeURIComponent(userId)}&date=${encodeURIComponent(dateKey)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Failed to fetch daily brief');
     setBrief(data);
@@ -107,7 +111,7 @@ export function DailyBrief({ userId }: DailyBriefProps) {
         const initialDate = getTodayDateKey();
         if (!cancelled) {
           setSelectedDate(initialDate);
-          await loadBrief(initialDate, false);
+          await loadBrief(initialDate);
         }
       } catch (e: any) {
         if (!cancelled) setError(e.message || 'Unable to load daily brief.');
@@ -123,26 +127,11 @@ export function DailyBrief({ userId }: DailyBriefProps) {
     setLoading(true);
     setError(null);
     try {
-      await loadBrief(dateKey, false);
+      await loadBrief(dateKey);
     } catch (e: any) {
       setError(e.message || 'Unable to load daily brief.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleRefreshToday = async () => {
-    const today = getTodayDateKey();
-    setRefreshing(true);
-    setError(null);
-    try {
-      await loadBrief(today, true);
-      setSelectedDate(today);
-      await loadHistory();
-    } catch (e: any) {
-      setError(e.message || 'Unable to refresh today brief.');
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -158,14 +147,16 @@ export function DailyBrief({ userId }: DailyBriefProps) {
 
   return (
     <div className="space-y-4 md:space-y-6">
-      <header className="rounded-2xl md:rounded-3xl border border-border-primary bg-surface-primary/60 backdrop-blur-md p-4 md:p-6">
+      <section className="rounded-2xl md:rounded-3xl border border-border-primary bg-surface-primary/60 backdrop-blur-md p-4 md:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-wider text-text-muted mb-1">Morning Digest</p>
-            <h2 className="text-2xl md:text-3xl font-black tracking-tight text-text-heading">Daily Brief</h2>
-            <p className="text-sm text-text-secondary mt-1">A cross-topic snapshot you can revisit anytime.</p>
-          </div>
+          <p className="text-sm md:text-base text-text-secondary">
+            A structured narrative across your interests, designed for fast scanning.
+          </p>
           <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-full text-xs border border-border-secondary bg-surface-base/60 text-text-secondary shrink-0">
+              Updated: {formatGeneratedAt(brief?.generatedAtIso) || 'Now'}
+            </span>
+            <span className="text-xs uppercase tracking-wider text-text-muted shrink-0">Date</span>
             <div className="relative">
               <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
               <select
@@ -180,17 +171,9 @@ export function DailyBrief({ userId }: DailyBriefProps) {
                 ))}
               </select>
             </div>
-            <button
-              onClick={handleRefreshToday}
-              disabled={refreshing}
-              className="px-3 py-2 rounded-xl border border-border-primary bg-surface-base text-sm text-text-primary hover:text-text-heading transition-colors disabled:opacity-50 inline-flex items-center gap-2"
-            >
-              <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
-              Refresh
-            </button>
           </div>
         </div>
-      </header>
+      </section>
 
       {error && (
         <div className="rounded-2xl p-4 flex items-center gap-3 border"
@@ -208,42 +191,73 @@ export function DailyBrief({ userId }: DailyBriefProps) {
       ) : brief ? (
         <>
           <section className="rounded-2xl md:rounded-3xl border border-border-primary bg-surface-primary/60 backdrop-blur-md p-4 md:p-6">
-            <p className="text-xs uppercase tracking-wider text-text-muted mb-2">Overview</p>
+            <p className="text-xs uppercase tracking-wider text-text-muted mb-2 flex items-center gap-2">
+              <Radar className="w-4 h-4" />
+              Overview Story
+            </p>
             {brief.overviewNarrative && (
-              <p className="text-sm md:text-base text-text-primary mb-3 whitespace-pre-line">
+              <p className="text-sm md:text-base text-text-primary mb-4 whitespace-pre-line leading-relaxed">
                 {brief.overviewNarrative}
               </p>
             )}
-            <ul className="space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {summaryLines.slice(0, 4).map((line, idx) => (
-                <li key={idx} className="text-sm md:text-base text-text-primary">{line.replace(/^•\s*/, '')}</li>
+                <div key={idx} className="rounded-xl border border-border-secondary bg-surface-base/60 p-3 text-sm text-text-primary">
+                  {line.replace(/^•\s*/, '')}
+                </div>
               ))}
-            </ul>
+            </div>
+            {brief.crossTopicThemes?.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {brief.crossTopicThemes.slice(0, 5).map((theme, idx) => (
+                  <span key={idx} className="px-2.5 py-1 rounded-full text-xs border border-border-secondary bg-surface-base/50 text-text-secondary">
+                    {theme}
+                  </span>
+                ))}
+              </div>
+            )}
           </section>
 
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-6">
             <div className="lg:col-span-2 rounded-2xl md:rounded-3xl border border-border-primary bg-surface-primary/60 backdrop-blur-md p-4 md:p-6">
-              <p className="text-xs uppercase tracking-wider text-text-muted mb-3">Topic Snapshots</p>
+              <p className="text-xs uppercase tracking-wider text-text-muted mb-3 flex items-center gap-2">
+                <Layers3 className="w-4 h-4" />
+                Topic Snapshots
+              </p>
               <div className="space-y-3">
                 {brief.topicSnapshots.slice(0, 12).map((item, idx) => (
-                  <div key={`${item.interest}-${idx}`} className="rounded-xl border border-border-secondary bg-surface-base/60 p-3">
-                    <p className="text-xs uppercase tracking-wider text-text-muted">{item.interest}</p>
-                    <p className="text-sm text-text-heading font-semibold mt-1">{item.headline}</p>
+                  <div key={`${item.interest}-${idx}`} className="rounded-xl border border-border-secondary bg-surface-base/60 p-3 md:p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs uppercase tracking-wider text-text-muted">{item.interest}</p>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border border-border-secondary bg-surface-primary/60 text-text-muted inline-flex items-center gap-1">
+                        <TypeIcon type={item.type} />
+                        {item.source}
+                      </span>
+                    </div>
+                    <p className="text-base md:text-lg text-text-heading font-semibold mt-2 leading-snug">{item.headline}</p>
                     {item.detailedSummary && (
-                      <p className="text-xs text-text-primary mt-2">{item.detailedSummary}</p>
+                      <p className="text-sm md:text-base text-text-primary mt-2 leading-relaxed">{item.detailedSummary}</p>
                     )}
-                    <p className="text-xs text-text-secondary mt-1">{item.whyItMatters}</p>
+                    <p className="text-sm text-text-secondary mt-2">{item.whyItMatters}</p>
                     {item.keyDevelopments && item.keyDevelopments.length > 0 && (
                       <ul className="mt-2 space-y-1">
                         {item.keyDevelopments.slice(0, 3).map((dev, i) => (
-                          <li key={i} className="text-xs text-text-secondary">{dev}</li>
+                          <li key={i} className="text-sm text-text-secondary">{dev}</li>
                         ))}
                       </ul>
                     )}
                     {item.signalCount && (
-                      <p className="text-[11px] text-text-muted mt-2">
-                        Signals: {item.signalCount.news} news · {item.signalCount.videos} videos · {item.signalCount.posts} posts
-                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className="text-[11px] px-2 py-0.5 rounded-full border border-border-secondary bg-surface-primary/60 text-text-muted">
+                          {item.signalCount.news} news
+                        </span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full border border-border-secondary bg-surface-primary/60 text-text-muted">
+                          {item.signalCount.videos} videos
+                        </span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full border border-border-secondary bg-surface-primary/60 text-text-muted">
+                          {item.signalCount.posts} posts
+                        </span>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -252,43 +266,36 @@ export function DailyBrief({ userId }: DailyBriefProps) {
 
             <div className="space-y-3 md:space-y-6">
               <div className="rounded-2xl border border-border-primary bg-surface-primary/60 backdrop-blur-md p-4">
-                <p className="text-xs uppercase tracking-wider text-text-muted mb-2">Coverage</p>
+                <p className="text-xs uppercase tracking-wider text-text-muted mb-3">Coverage Mix</p>
                 <p className="text-sm text-text-primary">News: {brief.counts.news}</p>
+                <div className="h-1.5 rounded-full bg-surface-base mt-1 mb-2 overflow-hidden">
+                  <div className="h-full bg-[var(--th-accent)]" style={{ width: `${Math.max(5, (brief.counts.news / Math.max(brief.counts.news + brief.counts.videos + brief.counts.posts, 1)) * 100)}%` }} />
+                </div>
                 <p className="text-sm text-text-primary">Videos: {brief.counts.videos}</p>
+                <div className="h-1.5 rounded-full bg-surface-base mt-1 mb-2 overflow-hidden">
+                  <div className="h-full bg-[var(--th-accent)]" style={{ width: `${Math.max(5, (brief.counts.videos / Math.max(brief.counts.news + brief.counts.videos + brief.counts.posts, 1)) * 100)}%` }} />
+                </div>
                 <p className="text-sm text-text-primary">Posts: {brief.counts.posts}</p>
+                <div className="h-1.5 rounded-full bg-surface-base mt-1 overflow-hidden">
+                  <div className="h-full bg-[var(--th-accent)]" style={{ width: `${Math.max(5, (brief.counts.posts / Math.max(brief.counts.news + brief.counts.videos + brief.counts.posts, 1)) * 100)}%` }} />
+                </div>
               </div>
               <div className="rounded-2xl border border-border-primary bg-surface-primary/60 backdrop-blur-md p-4">
-                <p className="text-xs uppercase tracking-wider text-text-muted mb-2">Watchlist</p>
+                <p className="text-xs uppercase tracking-wider text-text-muted mb-2 flex items-center gap-2">
+                  <ListChecks className="w-4 h-4" />
+                  Watchlist
+                </p>
                 <ul className="space-y-2">
                   {brief.watchlist.slice(0, 5).map((line, idx) => (
-                    <li key={idx} className="text-sm text-text-primary">{line}</li>
+                    <li key={idx} className="text-sm text-text-primary bg-surface-base/50 rounded-lg px-2.5 py-2 border border-border-secondary">
+                      {line}
+                    </li>
                   ))}
                 </ul>
               </div>
             </div>
           </section>
 
-          <section className="rounded-2xl md:rounded-3xl border border-border-primary bg-surface-primary/60 backdrop-blur-md p-4 md:p-6">
-            <p className="text-xs uppercase tracking-wider text-text-muted mb-3">Must Read</p>
-            <div className="space-y-2">
-              {brief.mustRead.slice(0, 12).map((item, idx) => (
-                <a
-                  key={`${item.url}-${idx}`}
-                  href={item.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-start gap-3 rounded-xl border border-border-secondary bg-surface-base/60 p-3 hover:bg-surface-base/80 transition-colors"
-                >
-                  <span className="mt-0.5 text-text-secondary"><TypeIcon type={item.type} /></span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-medium text-text-heading">{item.title}</span>
-                    <span className="block text-xs text-text-muted mt-1">{item.source}</span>
-                  </span>
-                  <ExternalLink className="w-4 h-4 text-text-muted shrink-0 mt-0.5" />
-                </a>
-              ))}
-            </div>
-          </section>
         </>
       ) : (
         <div className="rounded-2xl p-6 border border-border-secondary bg-surface-primary/40 text-text-secondary">

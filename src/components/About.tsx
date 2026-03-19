@@ -59,7 +59,7 @@ export function About({ onBack }: AboutProps) {
         />
         <FeatureCard
           icon={<CalendarDays className="w-5 h-5" />}
-          title="Daily Brief"
+          title="Morning Digest"
           description="Every morning, PulseBoard creates a structured digest with detailed topic snapshots and a cohesive overview story."
         />
         <FeatureCard
@@ -80,7 +80,7 @@ export function About({ onBack }: AboutProps) {
         <div className="space-y-4">
           <Step number={1} text="Pick 3–10 topics during onboarding, or add your own custom interests." />
           <Step number={2} text="Open For You to see a diversified mix of news, videos, and social posts across your interests." />
-          <Step number={3} text="Use Daily Brief from the sidebar for a morning digest and revisit past briefs from history anytime." />
+          <Step number={3} text="Use Morning Digest from the sidebar and revisit past briefs from history anytime." />
           <Step number={4} text="Use AI Insights for a quick overall summary, then expand by interest if you want deeper context." />
           <Step number={5} text="Save useful items, export your data anytime, and reset profile safely with confirmation when needed." />
         </div>

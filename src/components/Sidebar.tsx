@@ -92,16 +92,16 @@ export function Sidebar({ interests, activeInterest, setActiveInterest, user, is
               Saved
             </button>
             <button
-              onClick={() => handleInterestClick('Daily Brief')}
+              onClick={() => handleInterestClick('Morning Digest')}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
-                activeInterest === 'Daily Brief'
+                activeInterest === 'Morning Digest'
                   ? "bg-[var(--th-accent-soft)] text-[var(--th-accent-text)]"
                   : "text-text-tertiary hover:bg-[var(--th-surface-btn-overlay)] hover:text-text-primary"
               )}
             >
               <Newspaper className="w-4 h-4" />
-              Daily Brief
+              Morning Digest
             </button>
           </nav>
 

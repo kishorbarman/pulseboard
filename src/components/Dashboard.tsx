@@ -201,7 +201,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   };
 
   const fetchData = useCallback(async (forceRefresh = false) => {
-    if (activeInterest === 'About' || activeInterest === 'Daily Brief') {
+    if (activeInterest === 'About' || activeInterest === 'Morning Digest') {
       setLoading(false);
       setRefreshing(false);
       setError(null);
@@ -465,8 +465,6 @@ export function Dashboard({ user, userData }: DashboardProps) {
         >
           {activeInterest === 'About' ? (
             <About onBack={() => changeInterest('For You')} />
-          ) : activeInterest === 'Daily Brief' ? (
-            <DailyBrief userId={user.uid} />
           ) : (
             <>
               <header className="mb-4 md:mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 md:gap-6">
@@ -480,44 +478,48 @@ export function Dashboard({ user, userData }: DashboardProps) {
                   >
                     <Menu className="w-6 h-6" />
                   </button>
-                  {(activeInterest === 'For You' || activeInterest === 'Saved') && (
-                    <div>
-                      <h2 className="text-3xl md:text-clamp-xl font-black tracking-tight text-text-heading mb-1 drop-shadow-lg leading-none">
-                        {activeInterest}
-                      </h2>
+                  <div>
+                    <h2 className="text-2xl font-bold tracking-tight text-[var(--th-accent-text)] mb-1 leading-none">
+                      {activeInterest}
+                    </h2>
+                    {activeInterest === 'Saved' && (
                       <p className="text-text-secondary font-medium text-sm md:text-base">
-                        {activeInterest === 'For You'
-                          ? 'Curated for you.'
-                          : 'Your bookmarked articles, videos, and trends.'}
+                        Your bookmarked articles, videos, and trends.
                       </p>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 w-full lg:w-auto shrink-0">
-                  <form onSubmit={handleSearch} className="relative w-full lg:w-96">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search topics..."
-                      className="w-full bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 pl-12 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-[var(--th-focus-ring)] transition-all shadow-lg"
-                    />
-                  </form>
-                  {activeInterest !== 'Saved' && (
-                    <button
-                      onClick={() => fetchData(true)}
-                      disabled={loading || refreshing}
-                      className="p-2.5 rounded-full bg-surface-primary/60 backdrop-blur-md border border-border-primary text-text-secondary hover:text-text-heading hover:border-[var(--th-accent-border)] transition-all disabled:opacity-40 shrink-0"
-                      title="Refresh feed"
-                    >
-                      <RefreshCw className={cn("w-5 h-5", refreshing && "animate-spin")} />
-                    </button>
-                  )}
-                </div>
+                {activeInterest !== 'Morning Digest' && (
+                  <div className="flex items-center gap-2 w-full lg:w-auto shrink-0">
+                    <form onSubmit={handleSearch} className="relative w-full lg:w-96">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-muted" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search topics..."
+                        className="w-full bg-surface-primary/60 backdrop-blur-md border border-border-primary rounded-full py-3 pl-12 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-[var(--th-focus-ring)] transition-all shadow-lg"
+                      />
+                    </form>
+                    {activeInterest !== 'Saved' && (
+                      <button
+                        onClick={() => fetchData(true)}
+                        disabled={loading || refreshing}
+                        className="p-2.5 rounded-full bg-surface-primary/60 backdrop-blur-md border border-border-primary text-text-secondary hover:text-text-heading hover:border-[var(--th-accent-border)] transition-all disabled:opacity-40 shrink-0"
+                        title="Refresh feed"
+                      >
+                        <RefreshCw className={cn("w-5 h-5", refreshing && "animate-spin")} />
+                      </button>
+                    )}
+                  </div>
+                )}
               </header>
 
+              {activeInterest === 'Morning Digest' ? (
+                <DailyBrief userId={user.uid} />
+              ) : (
+                <>
               {sourceWarnings.length > 0 && (
                 <div className="mb-6 rounded-2xl px-5 py-3 flex items-start gap-3 text-[var(--th-warning-text)] backdrop-blur-md border"
                      style={{ backgroundColor: 'var(--th-warning-bg)', borderColor: 'var(--th-warning-border)' }}>
@@ -616,6 +618,8 @@ export function Dashboard({ user, userData }: DashboardProps) {
                   )}
                 </>
               )}
+                </>
+              )}
             </>
           )}
         </main>
@@ -654,7 +658,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
         )}
       </AnimatePresence>
 
-      {activeInterest !== 'About' && activeInterest !== 'Daily Brief' && (
+      {activeInterest !== 'About' && activeInterest !== 'Morning Digest' && (
         <AIPulse
           news={news}
           videos={videos}
