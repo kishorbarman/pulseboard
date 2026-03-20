@@ -30,8 +30,8 @@ Copy `.env.example` to `.env.local` and fill in:
 - `GEMINI_API_KEY` — Gemini AI (used client-side via Vite's `process.env` define)
 - `VITE_FIREBASE_*` — Firebase client SDK config (Auth + Firestore)
 - `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY` — Firebase Admin SDK (server-side vector search; optional)
-- `NEWSDATA_API_KEY` — NewsData.io for news articles
 - `YOUTUBE_API_KEY` — YouTube Data API v3
+- `TWITTER_BEARER_TOKEN` — X API access token (optional for real X posts)
 
 Firebase Admin credentials are optional; without them, vector search and personalization are disabled but the app still works.
 
@@ -41,7 +41,7 @@ This is a full-stack TypeScript app with a unified dev server:
 
 **`server.ts`** — Express server that:
 - Serves the Vite SPA in dev (via Vite middleware) and `dist/` in production
-- Proxies external APIs (NewsData.io, YouTube) to hide API keys
+- Proxies external APIs (RSS sources, YouTube, X) to hide API keys/tokens
 - Manages Firestore items collection and user interaction logging via Firebase Admin SDK
 - Implements vector-based personalization: stores item embeddings, tracks user click history, computes average vector profile, runs `findNearest` (cosine similarity) for the "For You" feed
 

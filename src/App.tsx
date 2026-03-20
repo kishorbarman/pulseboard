@@ -199,7 +199,7 @@ export default function App() {
               <LandingFeatureCard
                 icon={<Newspaper className="w-5 h-5" />}
                 title="Authoritative sources first"
-                description="RSS-first ingestion with curated publisher tiers, then NewsData fallback when coverage is sparse."
+                description="RSS-first ingestion with curated publisher tiers for high-quality, low-friction coverage."
               />
               <LandingFeatureCard
                 icon={<Sparkles className="w-5 h-5" />}

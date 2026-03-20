@@ -26,7 +26,6 @@ Give users a fast, low-clutter command center for what matters across their inte
 
 ### Feed ingestion
 - **RSS-first ingestion** for mapped interests (primary source).
-- **NewsData fallback** when RSS is sparse or interest is not curated.
 - **YouTube** ingestion for video candidates.
 - **X posts** ingestion (API when configured; mock fallback behavior in some flows).
 
@@ -68,7 +67,7 @@ Give users a fast, low-clutter command center for what matters across their inte
 ## Backend
 - Single Express server (`server.ts`) handles:
   - API routes
-  - RSS/NewsData/YouTube/X fetching
+  - RSS/YouTube/X fetching
   - ranking and summary generation
   - Firestore caching and personalization signals
   - Vite middleware in dev / static serving in prod
@@ -81,7 +80,7 @@ Give users a fast, low-clutter command center for what matters across their inte
 
 ### Single-interest feed (`/api/smart-feed`)
 1. Generate smart queries (Gemini; cached).
-2. Fetch RSS (primary) + NewsData fallback if needed.
+2. Fetch RSS (primary) and normalize results.
 3. Fetch YouTube and X in parallel.
 4. Run relevance filter.
 5. Rank candidates (deterministic, optional Gemini rerank, personalization at response time).
@@ -207,7 +206,6 @@ npm run deploy    # Cloud Run + Firebase Hosting
 
 Commonly used:
 - `GEMINI_API_KEY`
-- `NEWSDATA_API_KEY`
 - `YOUTUBE_API_KEY`
 - `TWITTER_BEARER_TOKEN` (if using real X API)
 - `VITE_FIREBASE_*`

@@ -33,6 +33,10 @@ const itemVariants = {
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
 };
 
+const INITIAL_RENDER_COUNT = 10;
+const RENDER_BATCH_SIZE = 10;
+const RENDER_BATCH_DELAY_MS = 120;
+
 const SkeletonLoader = () => (
   <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4">
     {[...Array(6)].map((_, i) => (
@@ -130,6 +134,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const [trendContext, setTrendContext] = useState<string>('');
   const [interestSummaries, setInterestSummaries] = useState<Record<string, string>>({});
   const [showScrollToTop, setShowScrollToTop] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT);
   
   // Initialize sidebar state based on window width
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -436,6 +441,31 @@ export function Dashboard({ user, userData }: DashboardProps) {
     if (trends[i]) mixedItems.push({ type: 'trend', data: trends[i], index: i });
   }
 
+  const enableProgressiveRender = activeInterest === 'For You';
+  const renderedItemCount = enableProgressiveRender
+    ? Math.min(visibleCount, mixedItems.length)
+    : mixedItems.length;
+  const visibleItems = mixedItems.slice(0, renderedItemCount);
+
+  useEffect(() => {
+    if (!enableProgressiveRender) {
+      setVisibleCount(mixedItems.length);
+      return;
+    }
+    setVisibleCount(Math.min(INITIAL_RENDER_COUNT, mixedItems.length));
+  }, [enableProgressiveRender, mixedItems.length, activeInterest, loadMultiplier]);
+
+  useEffect(() => {
+    if (!enableProgressiveRender) return;
+    if (loading || renderedItemCount >= mixedItems.length) return;
+
+    const timer = window.setTimeout(() => {
+      setVisibleCount((prev) => Math.min(mixedItems.length, prev + RENDER_BATCH_SIZE));
+    }, RENDER_BATCH_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [enableProgressiveRender, loading, renderedItemCount, mixedItems.length]);
+
   return (
     <div className="flex min-h-screen bg-transparent text-text-primary font-sans relative">
       <MeshGradient color1={colors.c1} color2={colors.c2} />
@@ -572,7 +602,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
                     animate="show"
                     className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4"
                   >
-                    {mixedItems.map((item, idx) => (
+                    {visibleItems.map((item, idx) => (
                       <motion.div key={`${item.type}-${idx}`} variants={itemVariants} className="h-full">
                         {item.type === 'news' && (
                           <NewsCard

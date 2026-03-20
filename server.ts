@@ -74,17 +74,16 @@ const FEED_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const RSS_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
 const RSS_MAX_FEEDS_PER_INTEREST = 4;
 const RSS_MAX_ITEMS_PER_INTEREST = 30;
-const RSS_MIN_RESULTS_BEFORE_NEWSDATA_FALLBACK = 3;
 const FEED_MAX_LOAD_MULTIPLIER = 4;
 const SINGLE_BASE_NEWS_LIMIT = 20;
 const SINGLE_BASE_VIDEO_LIMIT = 12;
 const SINGLE_BASE_POST_LIMIT = 12;
-const FORYOU_BASE_NEWS_LIMIT = 24;
-const FORYOU_BASE_VIDEO_LIMIT = 14;
-const FORYOU_BASE_POST_LIMIT = 12;
-const FORYOU_PER_INTEREST_NEWS_LIMIT = 6;
-const FORYOU_PER_INTEREST_VIDEO_LIMIT = 4;
-const FORYOU_PER_INTEREST_POST_LIMIT = 4;
+const FORYOU_BASE_NEWS_LIMIT = 48;
+const FORYOU_BASE_VIDEO_LIMIT = 28;
+const FORYOU_BASE_POST_LIMIT = 24;
+const FORYOU_PER_INTEREST_NEWS_LIMIT = 12;
+const FORYOU_PER_INTEREST_VIDEO_LIMIT = 8;
+const FORYOU_PER_INTEREST_POST_LIMIT = 8;
 const DAILY_BRIEF_TZ = process.env.DAILY_BRIEF_TZ || 'America/Los_Angeles';
 const ENABLE_GEMINI_RERANK = process.env.ENABLE_GEMINI_RERANK !== 'false';
 const GEMINI_RERANK_TOP_K = Math.max(5, Math.min(30, Number(process.env.GEMINI_RERANK_TOP_K || 15)));
@@ -94,9 +93,7 @@ const rssParser = new Parser();
 interface NewsIngestionStats {
   runs: number;
   rssItems: number;
-  newsDataItems: number;
   finalItems: number;
-  fallbackRuns: number;
   lastUpdatedAt: string;
 }
 
@@ -119,33 +116,27 @@ let lastDailyBriefSchedulerRunKey = '';
 function logNewsIngestionMetrics(
   topic: string,
   rssItems: number,
-  newsDataItems: number,
   finalItems: number,
-  usedFallback: boolean,
   context: string
 ): void {
   const key = topic.trim().toLowerCase();
   const current = newsIngestionMetrics.get(key) || {
     runs: 0,
     rssItems: 0,
-    newsDataItems: 0,
     finalItems: 0,
-    fallbackRuns: 0,
     lastUpdatedAt: new Date().toISOString(),
   };
 
   const updated: NewsIngestionStats = {
     runs: current.runs + 1,
     rssItems: current.rssItems + rssItems,
-    newsDataItems: current.newsDataItems + newsDataItems,
     finalItems: current.finalItems + finalItems,
-    fallbackRuns: current.fallbackRuns + (usedFallback ? 1 : 0),
     lastUpdatedAt: new Date().toISOString(),
   };
   newsIngestionMetrics.set(key, updated);
 
   console.log(
-    `[NewsMetrics] context=${context} topic="${topic}" rss=${rssItems} newsdata=${newsDataItems} final=${finalItems} fallback=${usedFallback} runs=${updated.runs} cumulativeRss=${updated.rssItems} cumulativeNewsData=${updated.newsDataItems} cumulativeFinal=${updated.finalItems} cumulativeFallbackRuns=${updated.fallbackRuns}`
+    `[NewsMetrics] context=${context} topic="${topic}" rss=${rssItems} final=${finalItems} runs=${updated.runs} cumulativeRss=${updated.rssItems} cumulativeFinal=${updated.finalItems}`
   );
 }
 
@@ -1534,35 +1525,6 @@ interface FetchResult<T> {
   error?: 'rate_limit' | 'quota_exceeded' | 'no_api_key' | 'network_error' | 'parse_error' | null;
 }
 
-async function fetchNewsForQuery(queryStr: string, category?: string): Promise<FetchResult<any>> {
-  const apiKey = process.env.NEWSDATA_API_KEY;
-  if (!apiKey) {
-    console.warn('[News] No NEWSDATA_API_KEY configured');
-    return { items: [], error: 'no_api_key' };
-  }
-  try {
-    let url = `https://newsdata.io/api/1/news?apikey=${apiKey}&q=${encodeURIComponent(queryStr)}&language=en`;
-    if (category) url += `&category=${category}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      const body = await response.text();
-      console.warn(`[News] query="${queryStr}" status=${response.status} body=${body.slice(0, 200)}`);
-      const error = response.status === 429 ? 'rate_limit' as const : 'network_error' as const;
-      return { items: [], error };
-    }
-    const data = await response.json();
-    const normalized = (data.results || []).map((item: any) => ({
-      ...item,
-      _ingestionSource: 'newsdata',
-    }));
-    console.log(`[News] query="${queryStr}" → ${normalized.length} results`);
-    return { items: normalized };
-  } catch (e) {
-    console.error('[News] fetchNewsForQuery error:', e);
-    return { items: [], error: 'network_error' };
-  }
-}
-
 function stripHtml(text: string): string {
   return text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -1898,32 +1860,11 @@ async function fetchAndCacheSingleInterest(topic: string): Promise<{
       (async () => {
         const errors = new Set<string | undefined>();
         const rssResult = await fetchRSSForInterest(topic);
-        const rssCount = rssResult.items.length;
-        let newsDataCount = 0;
-        let merged = [...rssResult.items];
+        const merged = [...rssResult.items];
         if (rssResult.error) errors.add(rssResult.error);
 
-        const shouldFallbackToNewsData =
-          merged.length < RSS_MIN_RESULTS_BEFORE_NEWSDATA_FALLBACK || !rssResult.isCurated;
-
-        if (shouldFallbackToNewsData) {
-          const fallbackQueries = rssResult.isCurated
-            ? smartQueries.newsQueries.slice(0, 1)
-            : smartQueries.newsQueries;
-          const allNewsDataResults = await Promise.all(
-            fallbackQueries.map(q => fetchNewsForQuery(q))
-          );
-          allNewsDataResults.forEach(r => {
-            if (r.error) errors.add(r.error);
-          });
-          const newsDataItems = allNewsDataResults.flatMap(r => r.items);
-          newsDataCount = newsDataItems.length;
-          merged = [...merged, ...newsDataItems];
-          console.log(`[News Hybrid] topic="${topic}" rss=${rssResult.items.length} fallbackQueries=${fallbackQueries.length} total=${merged.length}`);
-        }
-
         const deduped = dedupeNewsItems(merged);
-        logNewsIngestionMetrics(topic, rssCount, newsDataCount, deduped.length, shouldFallbackToNewsData, 'smart-feed');
+        logNewsIngestionMetrics(topic, rssResult.items.length, deduped.length, 'smart-feed');
         if (deduped.length === 0) warnings.push(buildWarning('News', errors));
         return deduped;
       })(),
@@ -2256,21 +2197,11 @@ app.get("/api/news", async (req, res) => {
   try {
     const rawTopic = (req.query.q as string) || "technology";
     const rssResult = await fetchRSSForInterest(rawTopic);
-    const rssCount = rssResult.items.length;
-    let newsDataCount = 0;
-    let results = [...rssResult.items];
-
-    const usedFallback = results.length < RSS_MIN_RESULTS_BEFORE_NEWSDATA_FALLBACK || !rssResult.isCurated;
-    if (usedFallback) {
-      const config = getTopicConfig(rawTopic);
-      const fallback = await fetchNewsForQuery(config.query, config.category);
-      newsDataCount = fallback.items.length;
-      results = dedupeNewsItems([...results, ...fallback.items]);
-    }
+    let results = dedupeNewsItems([...rssResult.items]);
 
     // Gemini relevance filtering
     results = await filterByRelevance(results, rawTopic, (item) => item.title);
-    logNewsIngestionMetrics(rawTopic, rssCount, newsDataCount, results.length, usedFallback, 'news-endpoint');
+    logNewsIngestionMetrics(rawTopic, rssResult.items.length, results.length, 'news-endpoint');
 
     const processed = await processAndStoreItems(
       results,
@@ -2737,20 +2668,16 @@ app.get("/api/news-metrics", async (_req, res) => {
         interestKey,
         ...stats,
         avgRssPerRun: Number((stats.rssItems / runs).toFixed(2)),
-        avgNewsDataPerRun: Number((stats.newsDataItems / runs).toFixed(2)),
         avgFinalPerRun: Number((stats.finalItems / runs).toFixed(2)),
-        fallbackRate: Number((stats.fallbackRuns / runs).toFixed(3)),
       };
     }).sort((a, b) => b.runs - a.runs);
 
     const totals = interests.reduce((acc, item) => {
       acc.runs += item.runs;
       acc.rssItems += item.rssItems;
-      acc.newsDataItems += item.newsDataItems;
       acc.finalItems += item.finalItems;
-      acc.fallbackRuns += item.fallbackRuns;
       return acc;
-    }, { runs: 0, rssItems: 0, newsDataItems: 0, finalItems: 0, fallbackRuns: 0 });
+    }, { runs: 0, rssItems: 0, finalItems: 0 });
 
     const totalRuns = Math.max(totals.runs, 1);
     res.json({
@@ -2758,9 +2685,7 @@ app.get("/api/news-metrics", async (_req, res) => {
       totals: {
         ...totals,
         avgRssPerRun: Number((totals.rssItems / totalRuns).toFixed(2)),
-        avgNewsDataPerRun: Number((totals.newsDataItems / totalRuns).toFixed(2)),
         avgFinalPerRun: Number((totals.finalItems / totalRuns).toFixed(2)),
-        fallbackRate: Number((totals.fallbackRuns / totalRuns).toFixed(3)),
       },
       interests,
     });

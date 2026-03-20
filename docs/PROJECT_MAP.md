@@ -40,7 +40,7 @@ Core UX:
 1. Check per-interest Firestore cache (`feedCache/{interest}`), TTL 12h.
 2. If stale cache exists, return stale quickly and refresh in background.
 3. Generate smart per-platform queries with Gemini (30-min in-memory cache).
-4. Fetch from NewsData, YouTube, X in parallel.
+4. Fetch from RSS, YouTube, X in parallel.
 5. Relevance filter each source with Gemini.
 6. Store items in `items` collection and build feed summary.
 7. Persist final feed payload back to `feedCache`.
@@ -130,7 +130,6 @@ Environment variables are in `.env.example`.
 Critical ones for full functionality:
 
 - `GEMINI_API_KEY`
-- `NEWSDATA_API_KEY`
 - `YOUTUBE_API_KEY`
 - `TWITTER_BEARER_TOKEN` (for X data)
 - `VITE_FIREBASE_*`

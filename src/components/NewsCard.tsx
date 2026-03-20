@@ -17,7 +17,7 @@ interface NewsCardProps {
 export function NewsCard({ article, onClick, className = '', isBookmarked, onBookmark }: NewsCardProps) {
   const bgImage = article.image_url || `https://picsum.photos/seed/${encodeURIComponent(article.title)}/800/600?blur=2`;
   const [showSummary, setShowSummary] = useState(false);
-  const sourceType = article._ingestionSource === 'rss' ? 'RSS' : article._ingestionSource === 'newsdata' ? 'NewsData' : 'News';
+  const sourceType = article._ingestionSource === 'rss' ? 'RSS' : 'News';
   const displaySource = (() => {
     const raw = String(article.source_id || '').replace(/\s*[-–—]\s*Google News\s*$/i, '').trim();
     const looksLikeSearchFeed = /site:|\(|\)|\bOR\b|google news/i.test(raw);

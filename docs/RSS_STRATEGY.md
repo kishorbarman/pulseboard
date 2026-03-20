@@ -1,11 +1,11 @@
 # RSS Strategy
 
-This document explains how PulseBoard now supports RSS alongside NewsData.
+This document explains how PulseBoard now uses RSS as the primary news source.
 
 ## Goal
 
 - Use RSS as the primary news source (no API quota pressure).
-- Use NewsData only as fallback when RSS is sparse or when a topic is not in the curated interest map.
+- Keep ingestion quality high with curated publisher mapping and relevance filtering.
 
 ## Runtime Behavior
 
@@ -13,18 +13,15 @@ This document explains how PulseBoard now supports RSS alongside NewsData.
 2. Fetch and parse RSS (Google News RSS queries scoped to trusted publishers).
 3. Normalize to existing news item shape (`title`, `link`, `description`, `pubDate`, `image_url`, `source_id`, `creator`).
 4. Filter to recent items (last 48 hours).
-5. If RSS returns fewer than `3` items, fallback to NewsData.
-6. Continue through existing relevance filter, cache, and UI pipeline.
-7. News cards display ingestion attribution (`RSS` or `NewsData`).
+5. Continue through existing relevance filter, cache, and UI pipeline.
+6. News cards display source attribution (`RSS` or publisher name).
 
 ## Metrics Logging
 
 The server now logs per-interest ingestion metrics on both smart-feed runs and direct `/api/news` calls:
 
 - RSS item count
-- NewsData item count
-- Final merged count
-- Whether fallback was used
+- Final news count
 - Cumulative totals by interest
 
 Log prefix: `[NewsMetrics]`
@@ -71,6 +68,6 @@ If a user picks an interest outside the curated table:
 
 1. The server generates fallback RSS search feeds dynamically from the raw interest text.
 2. It still applies relevance filtering and freshness checks.
-3. NewsData is used as a fallback if results remain sparse.
+3. No paid-news API fallback is used.
 
 This ensures custom topics continue to work without breaking the feed.
