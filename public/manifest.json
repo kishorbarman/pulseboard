@@ -5,17 +5,19 @@
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0c0a09",
-  "theme_color": "#4f46e5",
+  "theme_color": "#0b1117",
   "icons": [
     {
-      "src": "https://api.dicebear.com/7.x/shapes/svg?seed=PulseBoard&backgroundColor=4f46e5",
+      "src": "/pulseboard-logo.svg",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     },
     {
-      "src": "https://api.dicebear.com/7.x/shapes/svg?seed=PulseBoard&backgroundColor=4f46e5",
+      "src": "/pulseboard-logo.svg",
       "sizes": "512x512",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }

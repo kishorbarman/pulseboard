@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PulseBoard logo">
+  <defs>
+    <linearGradient id="pb-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1117" />
+      <stop offset="100%" stop-color="#1f2b3a" />
+    </linearGradient>
+    <linearGradient id="pb-accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#28c0ff" />
+      <stop offset="100%" stop-color="#18e0b5" />
+    </linearGradient>
+  </defs>
+
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#pb-bg)" />
+
+  <g transform="translate(94 98)">
+    <rect x="0" y="0" width="324" height="316" rx="42" fill="#0f1722" stroke="#2e435c" stroke-width="12" />
+    <rect x="36" y="38" width="252" height="18" rx="9" fill="#2e435c" />
+    <rect x="36" y="78" width="170" height="14" rx="7" fill="#2e435c" />
+
+    <path d="M38 188h58l24-62 44 120 40-92 20 34h62" fill="none" stroke="url(#pb-accent)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="122" cy="126" r="11" fill="#28c0ff" />
+    <circle cx="164" cy="246" r="11" fill="#18e0b5" />
+    <circle cx="204" cy="154" r="11" fill="#28c0ff" />
+  </g>
+</svg>
