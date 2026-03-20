@@ -78,6 +78,37 @@ export const resetProfile = async (userId: string) => {
   }
 };
 
+export const updateUserInterests = async (userId: string, interests: string[]) => {
+  if (!userId || !db) return false;
+  try {
+    const cleaned = interests
+      .map((interest) => String(interest || '').trim())
+      .filter(Boolean)
+      .slice(0, 20);
+
+    const deduped: string[] = [];
+    const seen = new Set<string>();
+    for (const interest of cleaned) {
+      const key = interest.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(interest);
+    }
+
+    if (deduped.length === 0) return false;
+
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, {
+      interests: deduped,
+      hasCompletedOnboarding: true
+    });
+    return true;
+  } catch (error) {
+    console.error("Error updating interests", error);
+    return false;
+  }
+};
+
 export const toggleBookmark = async (userId: string, item: any, type: string) => {
   if (!userId || !db) return false;
   try {

@@ -4,51 +4,12 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useTheme } from '../lib/theme';
 import { Loader2, Sparkles, Plus, X } from 'lucide-react';
-
-const AVAILABLE_INTERESTS = [
-  "Artificial Intelligence",
-  "Cybersecurity",
-  "Software Development",
-  "Gadgets & Consumer Tech",
-  "Space & Science",
-  "Robotics",
-  "World News",
-  "US Politics",
-  "Global Affairs",
-  "Climate & Energy",
-  "Economy",
-  "Markets & Investing",
-  "Startups & Business",
-  "Personal Finance",
-  "Crypto & Web3",
-  "Health & Wellness",
-  "Fitness",
-  "Food & Cooking",
-  "Travel",
-  "Fashion & Style",
-  "Photography",
-  "Gaming",
-  "Movies & TV",
-  "Music",
-  "Sports",
-  "Books",
-  "Design",
-  "Productivity",
-  "Education & Learning",
-  "Careers & Work"
-];
-
-const MIN_TOPICS = 3;
-const MAX_TOPICS = 10;
-
-function shuffleTopics(topics: string[]): string[] {
-  const items = [...topics];
-  for (let i = items.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [items[i], items[j]] = [items[j], items[i]];
-  }
-  return items;
-}
+import {
+  AVAILABLE_INTERESTS,
+  ONBOARDING_MAX_TOPICS as MAX_TOPICS,
+  ONBOARDING_MIN_TOPICS as MIN_TOPICS,
+  shuffleTopics
+} from '../lib/topics';
 
 export function Onboarding({ user }: { user: any }) {
   const [shuffledDefaultTopics] = useState<string[]>(() => shuffleTopics(AVAILABLE_INTERESTS));
