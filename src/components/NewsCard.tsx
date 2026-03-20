@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ExternalLink, Clock, User, Sparkles } from 'lucide-react';
+import { ExternalLink, Clock, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn, formatCompactTimeAgo } from '../lib/utils';
 import { HoverSummary } from './HoverSummary';
@@ -69,12 +69,6 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
           <span className="px-2.5 py-1 rounded-full font-medium border text-[var(--th-accent-text)] bg-[var(--th-accent-soft)] border-[var(--th-accent-border)]">
             {displaySource}
           </span>
-          {article.creator && article.creator[0] && (
-            <span className="flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5" />
-              <span className="truncate max-w-[120px]">{article.creator[0]}</span>
-            </span>
-          )}
         </div>
 
         <h3 className="text-xl font-bold text-text-primary leading-snug mb-3 group-hover:text-[var(--th-accent-text)] transition-colors line-clamp-2">

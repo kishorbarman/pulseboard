@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "dev:stable": "./scripts/dev-stable.sh",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",

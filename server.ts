@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import { Firestore, FieldValue, FieldPath } from "@google-cloud/firestore";
 import { GoogleGenAI } from "@google/genai";
 import Parser from "rss-parser";
-import { getRssFeedsForInterest } from "./rss-feeds.ts";
+import { getRssFeedsForInterest, type RssFeedSource } from "./rss-feeds.ts";
 
 dotenv.config();
 
@@ -72,8 +72,10 @@ function sanitizeForFirestore<T = any>(value: T): T {
 
 const FEED_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const RSS_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
-const RSS_MAX_FEEDS_PER_INTEREST = 4;
+const RSS_MAX_FEEDS_PER_INTEREST = 6;
 const RSS_MAX_ITEMS_PER_INTEREST = 30;
+const RSS_MIN_ITEMS_TARGET = 14;
+const RSS_MAX_EXPANSION_FEEDS = 4;
 const FEED_MAX_LOAD_MULTIPLIER = 4;
 const SINGLE_BASE_NEWS_LIMIT = 20;
 const SINGLE_BASE_VIDEO_LIMIT = 12;
@@ -89,6 +91,7 @@ const ENABLE_GEMINI_RERANK = process.env.ENABLE_GEMINI_RERANK !== 'false';
 const GEMINI_RERANK_TOP_K = Math.max(5, Math.min(30, Number(process.env.GEMINI_RERANK_TOP_K || 15)));
 const currentlyRefreshing = new Set<string>();
 const rssParser = new Parser();
+const rssCoverageProfileCache = new Map<string, { cachedAt: number; domains: string[] }>();
 
 interface NewsIngestionStats {
   runs: number;
@@ -1424,11 +1427,50 @@ Be strict — only include items clearly related to the topic. Exclude tangentia
     const relevantIndices: number[] = JSON.parse(match[0]);
     const filtered = items.filter((_, i) => relevantIndices.includes(i));
     console.log(`Gemini filter: ${topic} — kept ${filtered.length}/${items.length} items`);
-    return filtered.length > 0 ? filtered : items; // Fallback to all if filter is too aggressive
+    if (filtered.length === 0) return items; // Fallback to all if filter is too aggressive
+
+    // Guardrail: preserve a minimum set if Gemini is overly strict for a topic.
+    const minKeep = Math.min(5, Math.max(2, Math.ceil(items.length * 0.2)));
+    if (filtered.length < minKeep && items.length >= minKeep) {
+      return items.slice(0, minKeep);
+    }
+    return filtered;
   } catch (e) {
     console.warn('Gemini relevance filter failed, returning unfiltered:', e);
     return items;
   }
+}
+
+function refineConsumerFinanceNews(topic: string, items: any[]): any[] {
+  const normalizedTopic = String(topic || '').trim().toLowerCase();
+  if (normalizedTopic !== 'personal finance') return items;
+  if (items.length <= 3) return items;
+
+  const consumerTerms = [
+    'tax', 'retirement', '401k', 'ira', 'social security', 'mortgage',
+    'homebuy', 'home buying', 'rent', 'credit', 'debt', 'student loan',
+    'savings', 'budget', 'insurance', 'paycheck', 'cost of living',
+    'household', 'consumer', 'medicare',
+  ];
+  const matches = items.filter((item) => {
+    const title = String(item?.title || '').toLowerCase();
+    return consumerTerms.some((term) => title.includes(term));
+  });
+
+  // If we found enough consumer-finance items, prioritize them.
+  if (matches.length >= 3) {
+    const seen = new Set<string>();
+    const out: any[] = [];
+    for (const item of [...matches, ...items]) {
+      const key = String(item?.link || item?.title || '');
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+      if (out.length >= items.length) break;
+    }
+    return out;
+  }
+  return items;
 }
 
 const app = express();
@@ -1529,6 +1571,18 @@ function stripHtml(text: string): string {
   return text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function isLikelyPersonName(value?: string): boolean {
+  if (!value) return false;
+  const v = value.trim();
+  if (!v) return false;
+  if (/[0-9]/.test(v)) return false;
+  if (/\.(com|org|net|gov|io|co|edu)\b/i.test(v)) return false;
+  const parts = v.split(/\s+/).filter(Boolean);
+  if (parts.length < 2 || parts.length > 4) return false;
+  const looksNamey = parts.every((p) => /^[A-Z][a-z]+\.?$/.test(p) || /^[A-Z]\.$/.test(p));
+  return looksNamey;
+}
+
 function derivePublisherFromTitle(title?: string): string | null {
   if (!title) return null;
   const match = title.match(/(?:\s[-–—]\s)([^–—-]{2,80})\s*$/u);
@@ -1536,8 +1590,57 @@ function derivePublisherFromTitle(title?: string): string | null {
   if (!candidate) return null;
   if (/google news/i.test(candidate)) return null;
   if (/site:/i.test(candidate)) return null;
+  if (isLikelyPersonName(candidate)) return null;
   if (candidate.length > 60) return null;
   return candidate;
+}
+
+function derivePublisherFromDomain(rawDomain?: string): string | null {
+  if (!rawDomain) return null;
+  const domain = rawDomain.toLowerCase().replace(/^www\./, '').trim();
+  if (!domain) return null;
+
+  const known: Record<string, string> = {
+    'nytimes.com': 'The New York Times',
+    'apnews.com': 'AP News',
+    'bbc.com': 'BBC',
+    'ft.com': 'Financial Times',
+    'wsj.com': 'Wall Street Journal',
+    'cnbc.com': 'CNBC',
+    'npr.org': 'NPR',
+    'theverge.com': 'The Verge',
+    'arstechnica.com': 'Ars Technica',
+    'technologyreview.com': 'MIT Technology Review',
+    'marketwatch.com': 'MarketWatch',
+    'bloomberg.com': 'Bloomberg',
+    'reuters.com': 'Reuters',
+    'nasa.gov': 'NASA',
+    'esa.int': 'ESA',
+    'who.int': 'WHO',
+    'cdc.gov': 'CDC',
+  };
+  if (known[domain]) return known[domain];
+
+  const labels = domain.split('.').filter(Boolean);
+  if (labels.length < 2) return null;
+  let root = labels[labels.length - 2];
+  const secondLevelTlds = new Set(['co', 'com', 'org', 'net']);
+  if (secondLevelTlds.has(root) && labels.length >= 3) {
+    root = labels[labels.length - 3];
+  }
+  const cleaned = root.replace(/[-_]+/g, ' ').trim();
+  if (!cleaned) return null;
+  return cleaned.replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function normalizePublisherLabel(value?: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const cleaned = cleanGoogleNewsSuffix(cleanRssFeedTitle(raw));
+  if (!cleaned) return '';
+  const maybeDomainPublisher = derivePublisherFromDomain(cleaned);
+  if (maybeDomainPublisher) return maybeDomainPublisher;
+  return cleaned.replace(/\.(com|org|net|gov|io|co|edu|ai|us|uk|int)\b/gi, '').trim();
 }
 
 function cleanRssFeedTitle(feedTitle?: string): string {
@@ -1556,7 +1659,7 @@ function cleanGoogleNewsSuffix(text?: string): string {
 }
 
 function sanitizeSourceLabel(source?: string, title?: string): string {
-  const cleaned = cleanGoogleNewsSuffix(cleanRssFeedTitle(source));
+  const cleaned = normalizePublisherLabel(source);
   const looksLikeSearchFeed =
     /google news/i.test(source || '') ||
     /site:/i.test(cleaned) ||
@@ -1564,17 +1667,33 @@ function sanitizeSourceLabel(source?: string, title?: string): string {
     /[()"]/g.test(cleaned);
   const fromTitle = derivePublisherFromTitle(cleanGoogleNewsSuffix(title));
   if (looksLikeSearchFeed) return fromTitle || 'News';
+  if (isLikelyPersonName(cleaned)) return fromTitle || 'News';
   if (!cleaned) return fromTitle || 'News';
+  if (/^google(\.com)?$/i.test(cleaned)) return fromTitle || 'News';
   if (cleaned.length > 80) return fromTitle || 'News';
-  return cleaned;
+  return normalizePublisherLabel(cleaned) || cleaned;
+}
+
+function normalizePublisherDomain(domain?: string | null): string {
+  const d = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+  if (!d) return '';
+  if (d === 'news.google.com' || d === 'google.com' || d.endsWith('.google.com')) return '';
+  return d;
 }
 
 function sanitizeNewsItemForResponse(item: any): any {
   const cleanedTitle = cleanGoogleNewsSuffix(item?.title || '');
+  const linkDomain = normalizePublisherDomain(extractDomainFromUrl(item?.link || ''));
+  const linkPublisher = derivePublisherFromDomain(linkDomain || '');
+  const isRss = item?._ingestionSource === 'rss';
+  const sanitizedSource = sanitizeSourceLabel(item?.source_id, cleanedTitle || item?.title);
+  const sourceId = isRss
+    ? (linkPublisher || (isLikelyPersonName(sanitizedSource) ? 'News' : sanitizedSource))
+    : (isLikelyPersonName(sanitizedSource) ? (linkPublisher || 'News') : sanitizedSource);
   return {
     ...item,
     title: cleanedTitle || item?.title || '',
-    source_id: sanitizeSourceLabel(item?.source_id, cleanedTitle || item?.title),
+    source_id: sourceId || 'News',
   };
 }
 
@@ -1586,10 +1705,12 @@ function normalizeRssSourceId(item: any): any {
     /site:/i.test(rawSource);
   if (!shouldNormalize) return item;
   const fromTitle = derivePublisherFromTitle(item.title);
+  const linkDomain = normalizePublisherDomain(extractDomainFromUrl(item?.link || ''));
+  const fromDomain = derivePublisherFromDomain(linkDomain || '') || derivePublisherFromDomain(extractDomainFromUrl(item?.link || '') || '');
   const cleanedExisting = cleanRssFeedTitle(item.source_id);
   const existingLooksLikeQuery = /site:|\(|\)|\bOR\b/i.test(cleanedExisting);
   const safeExisting = existingLooksLikeQuery ? '' : cleanedExisting;
-  const sourceId = sanitizeSourceLabel(fromTitle || safeExisting || item.source_id, item.title);
+  const sourceId = sanitizeSourceLabel(fromTitle || fromDomain || safeExisting || item.source_id, item.title);
   return {
     ...item,
     title: cleanGoogleNewsSuffix(item.title || ''),
@@ -1614,10 +1735,39 @@ function isRecentEnough(pubDate?: string): boolean {
   return (Date.now() - ts) <= RSS_MAX_AGE_MS;
 }
 
+function makeSiteQuery(topic: string, domains: string[]): string {
+  return `${topic} (${domains.map((d) => `site:${d}`).join(" OR ")})`;
+}
+
+function makeGoogleNewsSearchUrl(query: string): string {
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+}
+
+function extractDomainFromUrl(rawUrl?: string): string | null {
+  if (!rawUrl) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    const nestedUrl = parsed.searchParams.get('url');
+    if (nestedUrl) {
+      try {
+        const nested = new URL(nestedUrl);
+        const nestedHost = nested.hostname.toLowerCase().replace(/^www\./, '');
+        return nestedHost || null;
+      } catch {
+        // fall through to top-level host parsing
+      }
+    }
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    return host || null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchRSSForInterest(topic: string): Promise<FetchResult<any> & { isCurated: boolean }> {
-  const { feeds, isCurated } = getRssFeedsForInterest(topic);
-  const selectedFeeds = feeds.slice(0, RSS_MAX_FEEDS_PER_INTEREST);
-  const perFeed = await Promise.all(selectedFeeds.map(async (feed) => {
+  const topicKey = topic.trim().toLowerCase();
+
+  const fetchSingleRssFeed = async (feed: RssFeedSource): Promise<FetchResult<any>> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 7000);
     try {
@@ -1635,53 +1785,172 @@ async function fetchRSSForInterest(topic: string): Promise<FetchResult<any> & { 
 
       const xml = await response.text();
       const parsed = await rssParser.parseString(xml);
-
       const normalized = (parsed.items || []).map((item: any) => {
         const descriptionRaw = item.contentSnippet || item.content || item.summary || '';
         const imageUrl = item.enclosure?.url || item['media:thumbnail']?.$?.url || item['media:content']?.$?.url || '';
         const publisherFromTitle = derivePublisherFromTitle(item.title);
         const cleanedFeedTitle = cleanRssFeedTitle(parsed.title);
-        const sourceId = publisherFromTitle || item.creator || cleanedFeedTitle || feed.name;
+        const rawLinkDomain = extractDomainFromUrl(item.link || '');
+        const linkDomain = normalizePublisherDomain(rawLinkDomain);
+        const publisherFromDomain = derivePublisherFromDomain(linkDomain || '');
+        const sourceId = sanitizeSourceLabel(
+          publisherFromDomain || publisherFromTitle || cleanedFeedTitle || feed.name,
+          item.title
+        );
         return {
           title: item.title || '',
           link: item.link || '',
           description: stripHtml(descriptionRaw).slice(0, 400),
           pubDate: item.isoDate || item.pubDate || '',
           image_url: imageUrl,
-          source_id: sourceId,
+          source_id: sourceId || 'News',
           creator: item.creator ? [item.creator] : [],
           _ingestionSource: 'rss',
           _sourceTier: feed.tier || 'B',
           _sourceDomains: feed.domains || [],
+          _linkDomain: linkDomain || rawLinkDomain || '',
         };
       }).filter((item: any) => item.title && item.link && isRecentEnough(item.pubDate));
-
       return { items: normalized };
     } catch (e: any) {
-      if (e?.name === 'AbortError') {
-        return { items: [], error: 'network_error' as const };
-      }
+      if (e?.name === 'AbortError') return { items: [], error: 'network_error' as const };
       console.warn(`[RSS] Failed for "${feed.name}" (${feed.url}):`, e);
       return { items: [], error: 'parse_error' as const };
     } finally {
       clearTimeout(timeout);
     }
-  }));
+  };
 
-  const errors = new Set(perFeed.map(r => r.error).filter(Boolean));
-  const merged = dedupeNewsItems(
+  const loadCoverageProfileDomains = async (): Promise<string[]> => {
+    const cached = rssCoverageProfileCache.get(topicKey);
+    if (cached && (Date.now() - cached.cachedAt) <= FEED_CACHE_TTL_MS) return cached.domains;
+    if (!firestore) return [];
+    try {
+      const doc = await firestore.collection('rssCoverageProfiles').doc(topicKey).get();
+      const domains = Array.isArray(doc.data()?.domains) ? doc.data()!.domains as string[] : [];
+      const cleaned = domains.map((d) => String(d).toLowerCase().trim()).filter(Boolean).slice(0, 30);
+      rssCoverageProfileCache.set(topicKey, { cachedAt: Date.now(), domains: cleaned });
+      return cleaned;
+    } catch {
+      return [];
+    }
+  };
+
+  const persistCoverageProfileDomains = async (domains: string[]): Promise<void> => {
+    const cleaned = domains.map((d) => d.toLowerCase().trim()).filter(Boolean);
+    if (cleaned.length === 0) return;
+    const existing = await loadCoverageProfileDomains();
+    const merged = Array.from(new Set([...existing, ...cleaned])).slice(0, 30);
+    rssCoverageProfileCache.set(topicKey, { cachedAt: Date.now(), domains: merged });
+    if (!firestore) return;
+    try {
+      await firestore.collection('rssCoverageProfiles').doc(topicKey).set({
+        domains: merged,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    } catch {
+      // non-fatal
+    }
+  };
+
+  const coverageDomainPool = (topicText: string): string[] => {
+    const lower = topicText.toLowerCase();
+    const general = ['nytimes.com', 'bbc.com', 'apnews.com', 'npr.org', 'ft.com', 'theguardian.com'];
+    if (/(finance|econom|market|stock|invest|personal finance|crypto)/.test(lower)) {
+      return [...general, 'bloomberg.com', 'cnbc.com', 'marketwatch.com', 'nerdwallet.com', 'money.com', 'fool.com', 'wsj.com'];
+    }
+    if (/(ai|artificial intelligence|software|tech|cyber|robot|data)/.test(lower)) {
+      return [...general, 'technologyreview.com', 'arstechnica.com', 'theverge.com', 'wired.com', 'techcrunch.com', 'infoq.com', 'github.blog'];
+    }
+    if (/(health|fitness|wellness|climate|science|space)/.test(lower)) {
+      return [...general, 'statnews.com', 'cdc.gov', 'nature.com', 'sciencemag.org', 'nasa.gov', 'esa.int', 'carbonbrief.org'];
+    }
+    return [...general, 'wsj.com', 'bloomberg.com', 'theverge.com', 'techcrunch.com'];
+  };
+
+  const { feeds, isCurated } = getRssFeedsForInterest(topic);
+  const selectedFeeds = feeds.slice(0, RSS_MAX_FEEDS_PER_INTEREST);
+  const perFeed = await Promise.all(selectedFeeds.map((feed) => fetchSingleRssFeed(feed)));
+
+  const errors = new Set(perFeed.map((r) => r.error).filter(Boolean));
+  const baseItems = dedupeNewsItems(
     perFeed
-      .flatMap(r => r.items)
+      .flatMap((r) => r.items)
       .sort((a: any, b: any) => (Date.parse(b.pubDate || '') || 0) - (Date.parse(a.pubDate || '') || 0))
-  ).slice(0, RSS_MAX_ITEMS_PER_INTEREST);
-  const normalizedMerged = merged.map(normalizeRssSourceId);
+  );
+
+  let merged = baseItems;
+  const needsExpansion = merged.length < RSS_MIN_ITEMS_TARGET;
+  if (needsExpansion) {
+    const existingDomains = new Set(
+      selectedFeeds.flatMap((f) => f.domains || []).map((d) => d.toLowerCase())
+    );
+    const storedDomains = await loadCoverageProfileDomains();
+    const domainPool = [...storedDomains, ...coverageDomainPool(topic)];
+    const candidateDomains = Array.from(new Set(domainPool))
+      .filter((d) => !existingDomains.has(d))
+      .slice(0, 18);
+    const expansionFeeds: RssFeedSource[] = [];
+    for (let i = 0; i < candidateDomains.length && expansionFeeds.length < RSS_MAX_EXPANSION_FEEDS; i += 4) {
+      const batch = candidateDomains.slice(i, i + 4);
+      if (batch.length === 0) continue;
+      expansionFeeds.push({
+        name: `${topic} adaptive domains ${expansionFeeds.length + 1}`,
+        url: makeGoogleNewsSearchUrl(makeSiteQuery(`${topic} latest`, batch)),
+        tier: 'B',
+        domains: batch,
+      });
+    }
+    if (expansionFeeds.length > 0) {
+      const expandedResults = await Promise.all(expansionFeeds.map((feed) => fetchSingleRssFeed(feed)));
+      const successfulDomains = expansionFeeds
+        .filter((feed, idx) => (expandedResults[idx]?.items?.length || 0) >= 2)
+        .flatMap((feed) => feed.domains);
+      if (successfulDomains.length > 0) {
+        await persistCoverageProfileDomains(successfulDomains);
+      }
+      const expandedItems = expandedResults.flatMap((r) => r.items || []);
+      merged = dedupeNewsItems(
+        [...merged, ...expandedItems]
+          .sort((a: any, b: any) => (Date.parse(b.pubDate || '') || 0) - (Date.parse(a.pubDate || '') || 0))
+      );
+    }
+  }
+
+  // Learn additional domain candidates from successful article links for future refreshes.
+  const discoveredDomainCounts = new Map<string, number>();
+  const excludedDomains = new Set([
+    'news.google.com',
+    'google.com',
+    'feedproxy.google.com',
+    'localhost',
+  ]);
+  for (const item of merged) {
+    const domain = extractDomainFromUrl(item?._linkDomain || item?.link || '');
+    if (!domain || excludedDomains.has(domain) || domain.endsWith('.google.com')) continue;
+    discoveredDomainCounts.set(domain, (discoveredDomainCounts.get(domain) || 0) + 1);
+  }
+  const discoveredDomains = Array.from(discoveredDomainCounts.entries())
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .map(([domain]) => domain)
+    .slice(0, 8);
+  if (discoveredDomains.length > 0) {
+    await persistCoverageProfileDomains(discoveredDomains);
+  }
+
+  const normalizedMerged = merged
+    .slice(0, RSS_MAX_ITEMS_PER_INTEREST)
+    .map(normalizeRssSourceId);
   logRssSourceMetrics(topic, normalizedMerged, isCurated);
 
-  console.log(`[RSS] topic="${topic}" curated=${isCurated} feeds=${selectedFeeds.length} items=${normalizedMerged.length}`);
+  console.log(`[RSS] topic="${topic}" curated=${isCurated} feeds=${selectedFeeds.length} items=${normalizedMerged.length}${needsExpansion ? ' adaptive=on' : ''}`);
 
   return {
     items: normalizedMerged,
-    error: normalizedMerged.length === 0 ? (errors.has('network_error') ? 'network_error' : errors.has('parse_error') ? 'parse_error' : null) : null,
+    error: normalizedMerged.length === 0
+      ? (errors.has('network_error') ? 'network_error' : errors.has('parse_error') ? 'parse_error' : null)
+      : null,
     isCurated,
   };
 }
@@ -1898,11 +2167,12 @@ async function fetchAndCacheSingleInterest(topic: string): Promise<{
     ]);
 
     // Step 3: Apply Gemini relevance filtering
-    const [filteredNews, filteredVideos, filteredPosts] = await Promise.all([
+    const [rawFilteredNews, filteredVideos, filteredPosts] = await Promise.all([
       filterByRelevance(newsResults, topic, (item) => item.title),
       filterByRelevance(ytResults, topic, (item) => item.snippet?.title || ''),
       filterByRelevance(xResults, topic, (item) => item.text),
     ]);
+    const filteredNews = refineConsumerFinanceNews(topic, rawFilteredNews);
 
     // Step 4: Deterministic ranking + optional Gemini rerank (importance layer)
     let rankedNews = attachBaseRank(filteredNews, 'news');
