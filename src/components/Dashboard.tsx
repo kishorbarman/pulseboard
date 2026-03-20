@@ -34,9 +34,9 @@ const itemVariants = {
 };
 
 const SkeletonLoader = () => (
-  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6">
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4">
     {[...Array(6)].map((_, i) => (
-      <div key={i} className="h-[400px] rounded-2xl md:rounded-3xl bg-surface-primary/50 animate-pulse border border-border-secondary" />
+      <div key={i} className="h-[400px] rounded-none md:rounded-3xl bg-surface-primary/50 animate-pulse border border-border-secondary border-x-0 md:border-x" />
     ))}
   </div>
 );
@@ -461,13 +461,13 @@ export function Dashboard({ user, userData }: DashboardProps) {
         <main
           ref={mainRef}
           onScroll={handleMainScroll}
-          className="flex-1 md:overflow-y-auto px-2 py-3 md:p-8 max-w-[1600px] mx-auto w-full mobile-hide-scrollbar"
+          className="flex-1 md:overflow-y-auto px-0 py-0 md:p-8 max-w-[1600px] mx-auto w-full mobile-hide-scrollbar"
         >
           {activeInterest === 'About' ? (
             <About onBack={() => changeInterest('For You')} />
           ) : (
             <>
-              <header className="mb-4 md:mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 md:gap-6">
+              <header className="mb-4 md:mb-8 px-4 md:px-0 pt-3 md:pt-0 flex flex-col lg:flex-row lg:items-center justify-between gap-4 md:gap-6">
                 <div className="flex items-center gap-4">
                   <button
                     className={cn(
@@ -570,7 +570,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
                     variants={containerVariants}
                     initial="hidden"
                     animate="show"
-                    className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6"
+                    className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4"
                   >
                     {mixedItems.map((item, idx) => (
                       <motion.div key={`${item.type}-${idx}`} variants={itemVariants} className="h-full">

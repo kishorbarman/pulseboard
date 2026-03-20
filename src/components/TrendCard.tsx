@@ -44,7 +44,7 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
       onClick={onClick}
       whileHover={{ y: -4 }}
       whileTap={{ scale: 0.97 }}
-      className={`group relative overflow-hidden rounded-2xl md:rounded-3xl border bg-surface-primary flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
+      className={`group relative overflow-hidden rounded-none md:rounded-3xl border border-x-0 md:border-x bg-surface-primary flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
     >
       <SourceMenu
         source="X"
@@ -68,7 +68,7 @@ export function TrendCard({ trend, index, onClick, className = '', isBookmarked,
 
       <div className={cn(
         "p-4 md:p-6 flex flex-col flex-1 bg-surface-primary/90 backdrop-blur-xl relative z-20",
-        imageUrl && "-mt-12 rounded-t-2xl md:rounded-t-3xl border-t border-border-secondary"
+        imageUrl && "-mt-12 rounded-t-none md:rounded-t-3xl border-t border-border-secondary"
       )}>
         {/* Author row */}
         <div className="flex items-center gap-3 mb-3 pr-14">

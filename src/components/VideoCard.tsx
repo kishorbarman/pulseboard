@@ -29,7 +29,7 @@ export function VideoCard({ video, onClick, className = '', isBookmarked, onBook
       onClick={onClick}
       whileHover={{ y: -4 }}
       whileTap={{ scale: 0.97 }}
-      className={`group relative overflow-hidden rounded-2xl md:rounded-3xl border bg-surface-primary text-left flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
+      className={`group relative overflow-hidden rounded-none md:rounded-3xl border border-x-0 md:border-x bg-surface-primary text-left flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
     >
       <SourceMenu
         source="YouTube"
@@ -53,7 +53,7 @@ export function VideoCard({ video, onClick, className = '', isBookmarked, onBook
         </div>
       </div>
 
-      <div className="p-4 md:p-6 flex flex-col flex-1 bg-surface-primary/90 backdrop-blur-xl relative z-20 -mt-12 rounded-t-2xl md:rounded-t-3xl border-t border-border-secondary">
+      <div className="p-4 md:p-6 flex flex-col flex-1 bg-surface-primary/90 backdrop-blur-xl relative z-20 -mt-12 rounded-t-none md:rounded-t-3xl border-t border-border-secondary">
         <div className="flex items-center gap-3 text-xs text-text-tertiary mb-3 pr-14">
           <span className="flex items-center gap-1.5">
             <Youtube className="w-3.5 h-3.5" />

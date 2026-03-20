@@ -42,7 +42,7 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
       onClick={onClick}
       whileHover={{ y: -4 }}
       whileTap={{ scale: 0.97 }}
-      className={`group relative overflow-hidden rounded-2xl md:rounded-3xl border bg-surface-primary flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
+      className={`group relative overflow-hidden rounded-none md:rounded-3xl border border-x-0 md:border-x bg-surface-primary flex flex-col transition-all duration-300 ${sentimentClass} ${className}`}
     >
       <SourceMenu
         source={sourceType}
@@ -64,7 +64,7 @@ export function NewsCard({ article, onClick, className = '', isBookmarked, onBoo
         <div className="absolute inset-0 bg-gradient-to-t from-[var(--th-surface-primary)] via-[var(--th-surface-primary)]/40 to-transparent" />
       </div>
 
-      <div className="p-4 md:p-6 flex flex-col flex-1 bg-surface-primary/90 backdrop-blur-xl relative z-20 -mt-12 rounded-t-2xl md:rounded-t-3xl border-t border-border-secondary">
+      <div className="p-4 md:p-6 flex flex-col flex-1 bg-surface-primary/90 backdrop-blur-xl relative z-20 -mt-12 rounded-t-none md:rounded-t-3xl border-t border-border-secondary">
         <div className="flex items-center gap-3 text-xs text-text-tertiary mb-3 pr-14">
           <span className="px-2.5 py-1 rounded-full font-medium border text-[var(--th-accent-text)] bg-[var(--th-accent-soft)] border-[var(--th-accent-border)]">
             {displaySource}
