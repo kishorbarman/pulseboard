@@ -19,6 +19,15 @@ interface FeedCacheDocument {
   updatedAt: FirebaseFirestore.Timestamp;
 }
 
+function sanitizeUserWarnings(input: unknown): string[] {
+  const raw = Array.isArray(input) ? input : [];
+  return raw
+    .map((w) => String(w || '').trim())
+    .filter(Boolean)
+    .filter((w) => !/AI query generation unavailable/i.test(w))
+    .filter((w) => !/Smart query generation failed/i.test(w));
+}
+
 interface DailyBriefTopicSnapshot {
   interest: string;
   headline: string;
@@ -237,7 +246,10 @@ async function readFeedCache(interest: string): Promise<FeedCacheDocument | null
     const data = doc.data() as FeedCacheDocument;
     const updatedAt = data.updatedAt?.toMillis?.() || 0;
     if (Date.now() - updatedAt > FEED_CACHE_TTL_MS) return null;
-    return data;
+    return {
+      ...data,
+      warnings: sanitizeUserWarnings((data as any)?.warnings),
+    };
   } catch (e) {
     console.error(`[FeedCache] Error reading cache for "${interest}":`, e);
     return null;
@@ -250,7 +262,11 @@ async function readFeedCacheEvenIfStale(interest: string): Promise<FeedCacheDocu
   try {
     const doc = await firestore.collection('feedCache').doc(key).get();
     if (!doc.exists) return null;
-    return doc.data() as FeedCacheDocument;
+    const data = doc.data() as FeedCacheDocument;
+    return {
+      ...data,
+      warnings: sanitizeUserWarnings((data as any)?.warnings),
+    };
   } catch (e) {
     console.error(`[FeedCache] Error reading stale cache for "${interest}":`, e);
     return null;
@@ -261,7 +277,10 @@ async function writeFeedCache(interest: string, data: Omit<FeedCacheDocument, 'u
   if (!firestore) return;
   const key = getFeedCacheKey(interest);
   try {
-    const safeData = sanitizeForFirestore(data);
+    const safeData = sanitizeForFirestore({
+      ...data,
+      warnings: sanitizeUserWarnings((data as any)?.warnings),
+    });
     await firestore.collection('feedCache').doc(key).set({
       ...safeData,
       updatedAt: FieldValue.serverTimestamp(),
@@ -356,6 +375,53 @@ function getTopicConfig(topic: string) {
   return { query: topic };
 }
 
+function extractJsonObjectFromText(text: string): any {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) throw new Error('Empty Gemini response');
+
+  // Fast path: fully valid JSON text.
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // continue
+  }
+
+  // Remove code fences if present.
+  const noFence = trimmed
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    return JSON.parse(noFence);
+  } catch {
+    // continue
+  }
+
+  // Final fallback: extract first JSON object block.
+  const match = noFence.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object found in Gemini response');
+  return JSON.parse(match[0]);
+}
+
+function normalizeQueryList(
+  value: any,
+  fallback: string,
+  limit: number,
+  ensureTwitterSuffix = false
+): string[] {
+  const source = Array.isArray(value) ? value : [];
+  const cleaned = source
+    .map((q) => String(q || '').trim())
+    .filter(Boolean)
+    .slice(0, limit);
+  if (cleaned.length === 0) {
+    return [ensureTwitterSuffix ? `${fallback} -is:retweet lang:en` : fallback];
+  }
+  if (!ensureTwitterSuffix) return cleaned;
+  return cleaned.map((q) => /-is:retweet\s+lang:en$/i.test(q) ? q : `${q} -is:retweet lang:en`);
+}
+
 // Gemini-powered smart query generation using Google Search grounding
 async function generateSmartQueries(topic: string): Promise<SmartQueryCache> {
   const cached = getCachedSmartQueries(topic);
@@ -397,6 +463,16 @@ Return ONLY the JSON object, no markdown fences or extra text.`;
     contents: prompt,
     config: {
       tools: [{ googleSearch: {} }],
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          newsQueries: { type: 'ARRAY', items: { type: 'STRING' } },
+          youtubeQueries: { type: 'ARRAY', items: { type: 'STRING' } },
+          twitterQueries: { type: 'ARRAY', items: { type: 'STRING' } },
+        },
+        required: ['newsQueries', 'youtubeQueries', 'twitterQueries'],
+      },
     },
   });
 
@@ -404,9 +480,7 @@ Return ONLY the JSON object, no markdown fences or extra text.`;
 
   let parsed: any;
   try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON found in response');
-    parsed = JSON.parse(jsonMatch[0]);
+    parsed = extractJsonObjectFromText(text);
   } catch (parseError) {
     console.warn('Failed to parse Gemini smart query response, falling back to TOPIC_CONFIG:', parseError);
     const config = getTopicConfig(topic);
@@ -418,9 +492,9 @@ Return ONLY the JSON object, no markdown fences or extra text.`;
   }
 
   return setCachedSmartQueries(topic, {
-    newsQueries: Array.isArray(parsed.newsQueries) ? parsed.newsQueries.slice(0, 3) : [topic],
-    youtubeQueries: Array.isArray(parsed.youtubeQueries) ? parsed.youtubeQueries.slice(0, 3) : [topic],
-    twitterQueries: Array.isArray(parsed.twitterQueries) ? parsed.twitterQueries.slice(0, 3) : [`${topic} -is:retweet lang:en`],
+    newsQueries: normalizeQueryList(parsed.newsQueries, topic, 3, false),
+    youtubeQueries: normalizeQueryList(parsed.youtubeQueries, topic, 3, false),
+    twitterQueries: normalizeQueryList(parsed.twitterQueries, topic, 3, true),
   });
 }
 
@@ -482,14 +556,16 @@ async function generateSmartQueriesForYou(interests: string[]): Promise<ForYouQu
 
 Research the latest trends for EACH of these topics: ${interests.join(', ')}
 
-Return a JSON object where each key is the exact topic name, with 2 short queries per platform:
+Return a JSON object in this exact shape:
 {
-  "${interests[0]}": {
-    "newsQueries": ["short query", "short query"],
-    "youtubeQueries": ["short query", "short query"],
-    "twitterQueries": ["query -is:retweet lang:en", "query -is:retweet lang:en"]
-  }${interests.length > 1 ? `,
-  "${interests[1]}": { ... }` : ''}
+  "topics": [
+    {
+      "topic": "exact topic name from input",
+      "newsQueries": ["short query", "short query"],
+      "youtubeQueries": ["short query", "short query"],
+      "twitterQueries": ["query -is:retweet lang:en", "query -is:retweet lang:en"]
+    }
+  ]
 }
 
 Rules:
@@ -505,6 +581,26 @@ Rules:
     contents: prompt,
     config: {
       tools: [{ googleSearch: {} }],
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          topics: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                topic: { type: 'STRING' },
+                newsQueries: { type: 'ARRAY', items: { type: 'STRING' } },
+                youtubeQueries: { type: 'ARRAY', items: { type: 'STRING' } },
+                twitterQueries: { type: 'ARRAY', items: { type: 'STRING' } },
+              },
+              required: ['topic', 'newsQueries', 'youtubeQueries', 'twitterQueries'],
+            },
+          },
+        },
+        required: ['topics'],
+      },
     },
   });
 
@@ -512,27 +608,25 @@ Rules:
 
   let parsed: any;
   try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON found in response');
-    parsed = JSON.parse(jsonMatch[0]);
+    parsed = extractJsonObjectFromText(text);
   } catch (parseError) {
     console.warn('Failed to parse For You smart queries, falling back to TOPIC_CONFIG:', parseError);
     return buildForYouFallback(interests);
   }
 
   // Validate and normalize parsed result
+  const topicItems = Array.isArray(parsed?.topics) ? parsed.topics : [];
   const perTopic: ForYouQueryCache['perTopic'] = {};
   for (const interest of interests) {
-    // Try exact match first, then case-insensitive
-    const topicData = parsed[interest] || Object.entries(parsed).find(
-      ([k]) => k.toLowerCase() === interest.toLowerCase()
-    )?.[1] as any;
+    // Try exact match first, then case-insensitive match in structured list.
+    const topicData = topicItems.find((entry: any) => String(entry?.topic || '').trim() === interest)
+      || topicItems.find((entry: any) => String(entry?.topic || '').trim().toLowerCase() === interest.toLowerCase());
 
     if (topicData && topicData.newsQueries) {
       perTopic[interest] = {
-        newsQueries: Array.isArray(topicData.newsQueries) ? topicData.newsQueries.slice(0, 2) : [interest],
-        youtubeQueries: Array.isArray(topicData.youtubeQueries) ? topicData.youtubeQueries.slice(0, 2) : [interest],
-        twitterQueries: Array.isArray(topicData.twitterQueries) ? topicData.twitterQueries.slice(0, 2) : [`${interest} -is:retweet lang:en`],
+        newsQueries: normalizeQueryList(topicData.newsQueries, interest, 2, false),
+        youtubeQueries: normalizeQueryList(topicData.youtubeQueries, interest, 2, false),
+        twitterQueries: normalizeQueryList(topicData.twitterQueries, interest, 2, true),
       };
     } else {
       // Fallback for this specific interest
@@ -2121,7 +2215,6 @@ async function fetchAndCacheSingleInterest(topic: string): Promise<{
         twitterQueries: [config.xQuery || `${topic} -is:retweet lang:en`],
         cachedAt: Date.now(),
       };
-      warnings.push('AI query generation unavailable, using default queries');
     }
 
     // Step 2: Fetch ALL queries per platform in parallel, merge and dedupe
