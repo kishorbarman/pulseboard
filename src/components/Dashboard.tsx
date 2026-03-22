@@ -151,6 +151,17 @@ export function Dashboard({ user, userData }: DashboardProps) {
   const interests = userData?.interests || ['Technology', 'AI', 'Global News'];
   const maxLoadMultiplier = 4;
 
+  const scrollFeedToTop = useCallback((behavior: ScrollBehavior = 'auto') => {
+    if (typeof window === 'undefined') return;
+    if (window.innerWidth >= 768) {
+      mainRef.current?.scrollTo({ top: 0, behavior });
+    } else {
+      window.scrollTo({ top: 0, behavior });
+    }
+    lastScrollYRef.current = 0;
+    setShowScrollToTop(false);
+  }, []);
+
   const changeInterest = (interest: string) => {
     setActiveInterest(interest);
     setLoadMultiplier(1);
@@ -166,6 +177,11 @@ export function Dashboard({ user, userData }: DashboardProps) {
   useEffect(() => {
     document.title = `${activeInterest} | PulseBoard`;
   }, [activeInterest]);
+
+  useEffect(() => {
+    // Always reset scroll position when moving between feed topics/views.
+    scrollFeedToTop('auto');
+  }, [activeInterest, scrollFeedToTop]);
 
   const updateScrollToTopVisibility = useCallback((currentY: number) => {
     const lastY = lastScrollYRef.current;
@@ -198,11 +214,7 @@ export function Dashboard({ user, userData }: DashboardProps) {
   };
 
   const scrollToTop = () => {
-    if (window.innerWidth >= 768) {
-      mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollFeedToTop('smooth');
   };
 
   const fetchData = useCallback(async (forceRefresh = false) => {
