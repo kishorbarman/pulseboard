@@ -1040,7 +1040,7 @@ async function generateFeedSummary(
   const prompt = `You are a sharp, concise news briefing writer. Based on the content below about "${topic}", write a 4–6 bullet point briefing.
 
 Rules:
-- Each bullet starts with • and is one sentence (max 24 words)
+- Each bullet starts with • and is one sentence (max 30 words)
 - Cover the most important themes across news, videos, and social posts
 - Be specific — use names, numbers, events, not vague statements
 - Write in present tense, like a news ticker
@@ -1106,7 +1106,7 @@ Write exactly 6 to 7 bullets total:
 3) Watchlist / next signal to monitor (1 to 2 bullets)
 
 Rules:
-- Max 20 words per bullet
+- Max 34 words per bullet
 - Avoid repeating the same entity
 - Use concrete names/events, not generic filler
 - No intro sentence, no section headers

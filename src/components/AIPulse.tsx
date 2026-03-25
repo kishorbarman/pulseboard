@@ -25,13 +25,16 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
   const [showByInterest, setShowByInterest] = useState(false);
   const cachedInterestRef = useRef<string>('');
   const contentRef = useRef<string>('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const latestModelReplyRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll only for follow-up chat (not on first open)
+  // Keep focus on the start of the latest AI reply (not bottom of sheet)
   useEffect(() => {
-    if (messages.length <= 1 && !responding) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (responding) return;
+    if (messages.length <= 1) return;
+    const last = messages[messages.length - 1];
+    if (last?.role !== 'model') return;
+    latestModelReplyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [messages, responding]);
 
   // Clear conversation when interest changes
@@ -190,7 +193,10 @@ ${contentRef.current}`;
                       {msg.text}
                     </div>
                   ) : (
-                    <div className="text-text-secondary leading-relaxed whitespace-pre-line">
+                    <div
+                      ref={i === followUpMessages.length - 1 ? latestModelReplyRef : null}
+                      className="text-text-secondary leading-relaxed whitespace-pre-line"
+                    >
                       {msg.text}
                     </div>
                   )}
@@ -203,7 +209,6 @@ ${contentRef.current}`;
                   Thinking...
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Follow-up input */}

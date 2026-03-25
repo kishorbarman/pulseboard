@@ -19,7 +19,7 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
   const [loading, setLoading] = useState(false);
   const [followUp, setFollowUp] = useState('');
   const [responding, setResponding] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latestModelReplyRef = useRef<HTMLParagraphElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollParentRef = useRef<Element | null>(null);
   const savedScrollRef = useRef<number>(0);
@@ -49,11 +49,13 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
     return bullets.map((b) => `• ${b}`).join('\n');
   };
 
-  // Auto-scroll messages inside the chat area (only for follow-ups, not initial load)
+  // Keep focus on the top of the newest AI reply (not the bottom)
   useEffect(() => {
-    if (messages.length > 1) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (responding) return;
+    if (messages.length <= 1) return;
+    const last = messages[messages.length - 1];
+    if (last?.role !== 'model') return;
+    latestModelReplyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [messages, responding]);
 
   // Scroll the entire summary into the viewport when it first appears
@@ -235,7 +237,12 @@ ${text}`;
                         {msg.text}
                       </div>
                     ) : (
-                      <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">{msg.text}</p>
+                      <p
+                        ref={i === messages.length - 1 ? latestModelReplyRef : null}
+                        className="text-sm text-text-secondary leading-relaxed whitespace-pre-line"
+                      >
+                        {msg.text}
+                      </p>
                     )}
                   </div>
                 ))
@@ -246,7 +253,6 @@ ${text}`;
                   Thinking...
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Follow-up input */}
