@@ -24,6 +24,31 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
   const scrollParentRef = useRef<Element | null>(null);
   const savedScrollRef = useRef<number>(0);
 
+  const normalizeBulletLines = (input: string): string => {
+    const raw = String(input || '').trim();
+    if (!raw) return raw;
+    const normalized = raw
+      .replace(/\r/g, '')
+      .replace(/\s*[•*-]\s+/g, '\n• ')
+      .replace(/^\n+/, '')
+      .trim();
+
+    const chunks = normalized
+      .split(/\n+/)
+      .map((line) => line.replace(/^[•*-]\s*/, '').trim())
+      .filter(Boolean);
+
+    const sentenceOnly = (text: string): string => {
+      const first = text.match(/(.+?[.!?])(?:\s|$)/)?.[1] || text;
+      const cleaned = first.trim().replace(/\s+/g, ' ');
+      if (!cleaned) return '';
+      return /[.!?]$/.test(cleaned) ? cleaned : `${cleaned}.`;
+    };
+
+    const bullets = chunks.slice(0, 3).map(sentenceOnly).filter(Boolean);
+    return bullets.map((b) => `• ${b}`).join('\n');
+  };
+
   // Auto-scroll messages inside the chat area (only for follow-ups, not initial load)
   useEffect(() => {
     if (messages.length > 1) {
@@ -88,9 +113,20 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
           const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
           const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Provide a 2-sentence 'tl;dr' summary of the following content:\n\n${text}`,
+            contents: `Provide a concise summary in exactly 3 bullet points.
+
+Format:
+• What happened
+• Why it matters
+• What to watch next
+
+Rules:
+- Return exactly 3 bullets
+- Each bullet is one short sentence
+- Keep bullets concrete, not generic\n\n${text}`,
           });
-          setMessages([{ role: 'model', text: response.text || 'Failed to generate summary.' }]);
+          const formatted = normalizeBulletLines(response.text || '');
+          setMessages([{ role: 'model', text: formatted || 'Failed to generate summary.' }]);
         } catch (e) {
           console.error("Failed to fetch summary", e);
           setMessages([{ role: 'model', text: 'Failed to generate summary.' }]);
@@ -113,7 +149,16 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
     setResponding(true);
 
     try {
-      const systemPrompt = `You are a helpful assistant. The user is asking about this article. Answer concisely (2-3 sentences max).\n\nARTICLE:\n${text}`;
+      const systemPrompt = `You are a helpful assistant. The user is asking about this article.
+
+Answer in 3-4 concise sentences:
+- Direct answer first
+- Include one concrete detail from the article
+- Briefly explain implication/impact
+- Optional next-step/context sentence
+
+ARTICLE:
+${text}`;
 
       const contents = [
         { role: 'user' as const, parts: [{ text: systemPrompt }] },
@@ -176,7 +221,7 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
             </div>
 
             {/* Messages */}
-            <div className="max-h-48 overflow-y-auto space-y-2">
+            <div className="space-y-2">
               {loading ? (
                 <div className="flex items-center gap-2 text-text-tertiary text-sm">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -190,7 +235,7 @@ export function HoverSummary({ text, isVisible, onClose }: HoverSummaryProps) {
                         {msg.text}
                       </div>
                     ) : (
-                      <p className="text-sm text-text-secondary leading-relaxed">{msg.text}</p>
+                      <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">{msg.text}</p>
                     )}
                   </div>
                 ))

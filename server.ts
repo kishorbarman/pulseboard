@@ -1037,13 +1037,14 @@ async function generateFeedSummary(
 
   if (parts.length === 0) return `Latest updates about ${topic}`;
 
-  const prompt = `You are a sharp, concise news briefing writer. Based on the content below about "${topic}", write a 3–5 bullet point briefing.
+  const prompt = `You are a sharp, concise news briefing writer. Based on the content below about "${topic}", write a 4–6 bullet point briefing.
 
 Rules:
-- Each bullet starts with • and is one sentence (max 20 words)
+- Each bullet starts with • and is one sentence (max 24 words)
 - Cover the most important themes across news, videos, and social posts
 - Be specific — use names, numbers, events, not vague statements
 - Write in present tense, like a news ticker
+- Include at least 1 "why this matters now" style takeaway
 - No intro line, no sign-off — just the bullets
 
 CONTENT:
@@ -1099,13 +1100,13 @@ async function generateForYouOverview(
 
 User interests: ${interests.join(', ')}
 
-Write exactly 5 to 6 bullets total:
+Write exactly 6 to 7 bullets total:
 1) Top 3 cross-feed themes (across all interests)
-2) What's newly important now (1 to 2 bullets)
-3) Watchlist (1 bullet)
+2) What's newly important now (2 bullets)
+3) Watchlist / next signal to monitor (1 to 2 bullets)
 
 Rules:
-- Max 16 words per bullet
+- Max 20 words per bullet
 - Avoid repeating the same entity
 - Use concrete names/events, not generic filler
 - No intro sentence, no section headers

@@ -26,9 +26,11 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
   const cachedInterestRef = useRef<string>('');
   const contentRef = useRef<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll only for follow-up chat (not on first open)
   useEffect(() => {
+    if (messages.length <= 1 && !responding) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, responding]);
 
@@ -63,6 +65,9 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
     // Already have messages for this interest — just re-open
     if (messages.length > 0) {
       setIsOpen(true);
+      requestAnimationFrame(() => {
+        bodyRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+      });
       return;
     }
 
@@ -70,6 +75,9 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
     contentRef.current = buildContentString();
     setMessages([{ role: 'model', text: trendContext }]);
     setIsOpen(true);
+    requestAnimationFrame(() => {
+      bodyRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    });
   };
 
   const sendFollowUp = async () => {
@@ -83,7 +91,16 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
     setResponding(true);
 
     try {
-      const systemPrompt = `You are a news analyst assistant. The user is asking about the following content feed. Answer concisely (2-3 sentences max).\n\nCONTENT:\n${contentRef.current}`;
+      const systemPrompt = `You are a news analyst assistant. The user is asking about the following content feed.
+
+Answer in 3-4 concise sentences:
+- Sentence 1: direct answer
+- Sentence 2: key evidence/examples from the feed
+- Sentence 3: why it matters now
+- Optional sentence 4: what to watch next
+
+CONTENT:
+${contentRef.current}`;
 
       const contents = [
         { role: 'user' as const, parts: [{ text: systemPrompt }] },
@@ -115,15 +132,19 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
     }
   };
 
+  const topicEntries = Object.entries(interestSummaries);
+  const leadMessage = messages[0]?.role === 'model' ? messages[0].text : '';
+  const followUpMessages = leadMessage ? messages.slice(1) : messages;
+
   return (
-    <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-30 flex flex-col items-end gap-4">
+    <div className="fixed inset-x-0 bottom-0 z-30 flex flex-col items-center gap-3 px-0 pb-4 md:pb-6 pointer-events-none">
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.9 }}
-            className="bg-surface-primary/95 backdrop-blur-xl border border-[var(--th-accent-border)] rounded-2xl shadow-2xl w-80 max-w-[calc(100vw-2rem)] max-h-[60vh] flex flex-col text-sm text-text-secondary"
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
+            className="pointer-events-auto bg-surface-primary/95 backdrop-blur-xl border border-[var(--th-accent-border)] rounded-t-3xl rounded-b-none shadow-2xl w-full max-h-[92dvh] flex flex-col text-sm text-text-secondary border-x-0 border-b-0"
           >
             {/* Header */}
             <div className="flex items-center justify-between p-4 pb-3 shrink-0">
@@ -139,10 +160,31 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
               </button>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-4 pb-3 space-y-3 min-h-0">
-              {messages.map((msg, i) => (
-                <div key={i} className={msg.role === 'user' ? 'flex justify-end' : ''}>
+            {/* Scrollable body */}
+            <div ref={bodyRef} className="flex-1 overflow-y-auto px-4 pb-3 space-y-3 min-h-0">
+              {leadMessage && (
+                <div className="rounded-xl border border-[var(--th-accent-border)] bg-[var(--th-accent-soft)] px-3 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--th-accent-text)] mb-1">Overall Brief</p>
+                  <div className="text-text-secondary leading-relaxed whitespace-pre-line">{leadMessage}</div>
+                </div>
+              )}
+
+              {activeInterest === 'For You' && topicEntries.length > 0 && (
+                <div className="rounded-xl border border-border-secondary bg-surface-secondary/30 p-3">
+                  <p className="text-xs font-semibold text-text-primary mb-2">By Interest</p>
+                  <div className="space-y-2">
+                    {topicEntries.map(([interest, summary]) => (
+                      <details key={interest} open={showByInterest} className="rounded-lg border border-border-secondary bg-surface-primary/50 px-3 py-2">
+                        <summary className="cursor-pointer text-xs font-semibold text-text-primary">{interest}</summary>
+                        <p className="mt-2 text-xs text-text-secondary whitespace-pre-line leading-relaxed">{summary}</p>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {followUpMessages.map((msg, i) => (
+                <div key={`chat-${i}`} className={msg.role === 'user' ? 'flex justify-end' : ''}>
                   {msg.role === 'user' ? (
                     <div className="bg-[var(--th-accent-soft)] text-text-primary border border-[var(--th-accent-border)] rounded-xl rounded-br-sm px-3 py-2 max-w-[85%]">
                       {msg.text}
@@ -154,6 +196,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
                   )}
                 </div>
               ))}
+
               {responding && (
                 <div className="flex items-center gap-2 text-text-tertiary">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -162,28 +205,6 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
               )}
               <div ref={messagesEndRef} />
             </div>
-
-            {activeInterest === 'For You' && Object.keys(interestSummaries).length > 0 && (
-              <div className="px-4 pb-2">
-                <button
-                  type="button"
-                  onClick={() => setShowByInterest(v => !v)}
-                  className="text-xs font-semibold text-[var(--th-accent-text)] hover:underline"
-                >
-                  {showByInterest ? 'Hide by-interest details' : 'Expand by interest'}
-                </button>
-                {showByInterest && (
-                  <div className="mt-2 space-y-2 max-h-40 overflow-y-auto pr-1">
-                    {Object.entries(interestSummaries).map(([interest, summary]) => (
-                      <details key={interest} className="rounded-lg border border-border-secondary bg-surface-secondary/30 px-3 py-2">
-                        <summary className="cursor-pointer text-xs font-semibold text-text-primary">{interest}</summary>
-                        <p className="mt-2 text-xs text-text-secondary whitespace-pre-line leading-relaxed">{summary}</p>
-                      </details>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Follow-up input */}
             {messages.length > 0 && (
@@ -218,7 +239,7 @@ export function AIPulse({ news, videos, trends, activeInterest, trendContext, in
           whileTap={{ scale: 0.98 }}
           onClick={openInsights}
           disabled={!trendContext}
-          className={`relative flex items-center gap-2 md:gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-[var(--th-accent-border)] shadow-lg transition-colors disabled:opacity-40 hover:border-[var(--th-accent)] px-3 py-2 md:py-3 ${
+          className={`pointer-events-auto self-end mr-4 md:mr-6 relative flex items-center gap-2 md:gap-3 rounded-2xl bg-surface-primary/90 backdrop-blur-xl border border-[var(--th-accent-border)] shadow-lg transition-colors disabled:opacity-40 hover:border-[var(--th-accent)] px-3 py-2 md:py-3 ${
             trendContext ? 'md:px-4 md:max-w-sm' : 'md:px-4'
           }`}
         >
