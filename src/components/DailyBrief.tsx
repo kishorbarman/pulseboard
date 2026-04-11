@@ -107,11 +107,10 @@ export function DailyBrief({ userId }: DailyBriefProps) {
       setLoading(true);
       setError(null);
       try {
-        await loadHistory();
         const initialDate = getTodayDateKey();
         if (!cancelled) {
           setSelectedDate(initialDate);
-          await loadBrief(initialDate);
+          await Promise.all([loadBrief(initialDate), loadHistory()]);
         }
       } catch (e: any) {
         if (!cancelled) setError(e.message || 'Unable to load daily brief.');

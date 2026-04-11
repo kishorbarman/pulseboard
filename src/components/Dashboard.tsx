@@ -175,6 +175,18 @@ export function Dashboard({ user, userData }: DashboardProps) {
   }, [user.uid]);
 
   useEffect(() => {
+    if (!user?.uid) return;
+    // Kick off today's Morning Digest generation as soon as dashboard mounts.
+    void fetch('/api/prewarm-daily-brief', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.uid }),
+    }).catch(() => {
+      // Non-fatal warmup hint; Daily Brief endpoint remains source of truth.
+    });
+  }, [user?.uid]);
+
+  useEffect(() => {
     document.title = `${activeInterest} | PulseBoard`;
   }, [activeInterest]);
 

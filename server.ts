@@ -124,6 +124,7 @@ interface RssSourceMetrics {
 
 const rssSourceMetrics = new Map<string, RssSourceMetrics>();
 let lastDailyBriefSchedulerRunKey = '';
+const dailyBriefWarmInFlight = new Set<string>();
 
 function logNewsIngestionMetrics(
   topic: string,
@@ -1484,6 +1485,26 @@ async function buildDailyBriefForUser(userId: string, dateKey: string, forceRefr
   return doc;
 }
 
+async function prewarmDailyBriefForUser(userId: string): Promise<void> {
+  if (!firestore || !userId) return;
+  const dateKey = getDateKeyInTz(new Date(), DAILY_BRIEF_TZ);
+  const warmKey = `${userId}:${dateKey}`;
+  if (dailyBriefWarmInFlight.has(warmKey)) return;
+
+  try {
+    const briefRef = firestore.collection('users').doc(userId).collection('dailyBriefings').doc(dateKey);
+    const existing = await briefRef.get();
+    if (existing.exists) return;
+
+    dailyBriefWarmInFlight.add(warmKey);
+    await buildDailyBriefForUser(userId, dateKey, false);
+  } catch (e) {
+    console.error(`[daily-brief-prewarm] Failed for user ${userId}:`, e);
+  } finally {
+    dailyBriefWarmInFlight.delete(warmKey);
+  }
+}
+
 // Gemini-based relevance filtering
 async function filterByRelevance(items: any[], topic: string, getTitleFn: (item: any) => string): Promise<any[]> {
   if (items.length < 5) return items; // Not worth filtering tiny sets
@@ -2557,6 +2578,27 @@ app.get("/api/daily-brief-history", async (req, res) => {
   }
 });
 
+app.post("/api/prewarm-daily-brief", async (req, res) => {
+  try {
+    if (!firestore) return res.status(503).json({ error: "Firestore Admin not configured" });
+    const userId = (req.body?.userId as string) || (req.query.userId as string) || '';
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const dateKey = getDateKeyInTz(new Date(), DAILY_BRIEF_TZ);
+    const warmKey = `${userId}:${dateKey}`;
+    const briefRef = firestore.collection('users').doc(userId).collection('dailyBriefings').doc(dateKey);
+    const existing = await briefRef.get();
+    if (existing.exists) return res.json({ status: 'ready', dateKey });
+    if (dailyBriefWarmInFlight.has(warmKey)) return res.json({ status: 'warming', dateKey });
+
+    void prewarmDailyBriefForUser(userId);
+    return res.json({ status: 'started', dateKey });
+  } catch (error) {
+    console.error("Error in prewarm-daily-brief:", error);
+    res.status(500).json({ error: "Failed to prewarm daily brief" });
+  }
+});
+
 app.get("/api/news", async (req, res) => {
   try {
     const rawTopic = (req.query.q as string) || "technology";
@@ -2762,6 +2804,7 @@ app.get("/api/smart-feed", async (req, res) => {
     const userId = (req.query.userId as string) || '';
     const debugKey = (req.query.debugKey as string) || '';
     const personalizationSignals = await getPersonalizationSignals(userId || null);
+    if (userId) void prewarmDailyBriefForUser(userId);
 
     // 1. If not forcing refresh, check cache first
     if (!forceRefresh) {
@@ -2831,6 +2874,7 @@ app.get("/api/smart-feed-foryou", async (req, res) => {
     const userId = (req.query.userId as string) || '';
     const debugKey = (req.query.debugKey as string) || '';
     const personalizationSignals = await getPersonalizationSignals(userId || null);
+    if (userId) void prewarmDailyBriefForUser(userId);
 
     // 1. If not forcing refresh, try to serve from per-interest caches
     if (!forceRefresh) {
